@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.text.*?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.paint.Color?>
+
+<VBox spacing="15"
+      xmlns="http://javafx.com/javafx/21"
+      xmlns:fx="http://javafx.com/fxml"
+      fx:controller="com.example.frontend.controller.MainController"
+      alignment="TOP_CENTER"
+      style="-fx-background-color: #f9f9f9;">
+
+    <padding>
+        <Insets top="30" right="30" bottom="30" left="30" />
+    </padding>
+
+    <Label text="🎥 Hệ thống giám sát thông minh"
+           style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #333;" />
+
+    <!-- Nhập URL camera -->
+    <HBox spacing="10" alignment="CENTER">
+        <TextField fx:id="cameraUrlInput"
+                   promptText="Nhập URL camera (http://...)"
+                   style="-fx-font-size: 14px; -fx-pref-width: 400;"
+                   HBox.hgrow="ALWAYS"/>
+        <Button text="➕ Thêm"
+                onAction="#handleAddCamera"
+                style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;" />
+    </HBox>
+
+    <!-- Danh sách camera -->
+    <Label text="📋 Danh sách camera đang theo dõi:"
+           style="-fx-font-size: 16px; -fx-font-weight: bold;" />
+
+    <VBox fx:id="cameraListContainer" spacing="10" prefWidth="600">
+        <!-- Mỗi dòng sẽ là một GridPane có 2 cột -->
+        <!-- Cột 1: camera URL (Label), Cột 2: HBox chứa các nút -->
+    </VBox>
+
+</VBox>
