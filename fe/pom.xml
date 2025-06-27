@@ -41,6 +41,12 @@
         </dependency>
 
         <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-media</artifactId>
+            <version>21</version>
+        </dependency>
+
+        <dependency>
             <groupId>com.squareup.retrofit2</groupId>
             <artifactId>converter-gson</artifactId>
             <version>2.9.0</version>
@@ -85,6 +91,11 @@
                 <version>0.0.8</version>
                 <configuration>
                     <mainClass>com.example.frontend.MainApp</mainClass>
+                    <modules>
+                        <module>javafx.controls</module>
+                        <module>javafx.fxml</module>
+                        <module>javafx.media</module>
+                    </modules>
                 </configuration>
             </plugin>
         </plugins>
