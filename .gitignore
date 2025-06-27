@@ -1,0 +1,34 @@
+# ─── Python ────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Thư mục ảo hóa
+.venv/
+.env
+
+# YOLO model file
+*.pt
+
+
+# Cache của Ultralytics (nếu có)
+runs/
+*.onnx
+
+# ─── Java / JavaFX ─────────────────────────
+# Maven target folders
+fe/target/
+*.class
+# Build cache
+*.iml
+*.ipr
+*.iws
+.idea/
+*.log
+# ─── VSCode ────────────────────────────────
+.vscode/
+# Thư mục cache của VSCode
+.history/
