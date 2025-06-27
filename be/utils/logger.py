@@ -1,5 +1,4 @@
-import os
-import cv2
+# utils/logger.py
 import logging
 from datetime import datetime
 from pymongo import MongoClient
@@ -10,10 +9,7 @@ from config import (
     DB_NAME,
     COLLECTION_EVENTS,
     COLLECTION_CAMERAS,
-    IMAGE_OUTPUT_DIR,
-    VIDEO_OUTPUT_DIR,
 )
-from utils.helpers import record_clip
 
 # Thiết lập MongoDB
 client = MongoClient(MONGO_URI)
@@ -22,7 +18,7 @@ event_collection = db[COLLECTION_EVENTS]
 camera_collection = db[COLLECTION_CAMERAS]
 
 
-# Logger
+# Logger setup
 def setup_logger(name="app"):
     logger = logging.getLogger(name)
     if not logger.hasHandlers():
@@ -32,7 +28,6 @@ def setup_logger(name="app"):
         handler.setFormatter(formatter)
         logger.addHandler(handler)
     return logger
-
 
 logger = setup_logger("detector")
 
@@ -48,8 +43,7 @@ def save_camera(url: str) -> ObjectId:
 
 
 # Ghi log sự kiện phát hiện
-def log_event(label, conf, frame=None, save_img=True, source=None):
-    
+def log_event(label, conf, source=None, video_path=None):
     now = datetime.now()
     timestamp = now.isoformat()
     source_str = str(source) if source is not None else None
@@ -65,30 +59,9 @@ def log_event(label, conf, frame=None, save_img=True, source=None):
         "camera_id": camera_id,
     }
 
-    if frame is not None:
-        doc["frame_shape"] = frame.shape
-
-    # Lưu ảnh nếu cần
-    if save_img and frame is not None:
-        date_str = now.strftime("%Y-%m-%d")
-        hour_str = now.strftime("%H")
-        folder = os.path.join(IMAGE_OUTPUT_DIR, date_str, hour_str)
-        os.makedirs(folder, exist_ok=True)
-
-        filename = os.path.join(folder, f"{label}_{now.strftime('%M%S')}.jpg")
-        success = cv2.imwrite(filename, frame)
-        if success:
-            doc["image_path"] = filename
-            logger.info(f"📸 Ảnh lưu tại: {filename}")
-        else:
-            logger.warning("⚠️ Không thể lưu ảnh")
-
-    # Lưu video nếu có source
-    if source is not None:
-        video_path = record_clip(source, label)
-        if video_path:
-            doc["video_path"] = video_path
-            logger.info(f"🎞  Clip lưu tại: {video_path}")
+    if video_path:
+        doc["video_path"] = video_path
+        logger.info(f"🎞  Clip lưu tại: {video_path}")
 
     event_collection.insert_one(doc)
     logger.info(f"✅ Ghi log sự kiện: {label} ({conf:.2f})")

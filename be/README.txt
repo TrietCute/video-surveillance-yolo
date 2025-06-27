@@ -10,8 +10,10 @@ Chạy ip web cam:
 2. Vào video preferences, chỉnh camera lại (không dùng Camera2). Chỉnh video resolution và photo resolution. (Đề xuất 800x600).
 3. Kéo xuống cuối, chọn Start Server. Sẽ thấy ip từ máy. (Đảm bảo máy tính và điện thoại kết nối cùng wifi)
 
+Đã xong:
+- Thể hiện danh sách video của camera.
+- Camera chạy nhanh hơn.
+
 Còn lỗi:
 - Chưa chụp được ảnh.
-- Màn hình frame còn ping cao, bị chậm.
 - Chưa test thử nhiều camera.
-- Màn hình chi tiết camera chưa có gì.

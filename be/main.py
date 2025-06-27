@@ -1,11 +1,10 @@
 from fastapi import FastAPI, Query, Body
 from object_detection import detect
 from utils.logger import setup_logger, save_camera
+from bson import ObjectId
 from pymongo import MongoClient
 from config import MONGO_URI, DB_NAME, COLLECTION_CAMERAS, COLLECTION_EVENTS
-from threading import Thread
 import threading
-from datetime import datetime
 import os
 from fastapi import HTTPException
 
@@ -30,7 +29,7 @@ def root():
 @app.post("/add-camera")
 def add_camera(url: str = Body(..., embed=True)):
     if url == "local":
-        url = "0"  # để đồng bộ với log_event
+        url = "0"
     cam_id = save_camera(url)
     logger.info(f"📷 Thêm camera: {url}")
     return {"status": "added", "url": url, "id": str(cam_id)}
@@ -75,18 +74,32 @@ def stop_stream(url: str = Query(...)):
 
 
 @app.get("/camera-files")
-def camera_files(camera_id: str, date: str, hour: int):
-    from config import IMAGE_OUTPUT_DIR, VIDEO_OUTPUT_DIR
+def camera_files(camera_id: str):
+    query = {"camera_id": ObjectId(camera_id)}
+    events = event_col.find(query)
 
-    base_paths = [(IMAGE_OUTPUT_DIR, "snapshots"), (VIDEO_OUTPUT_DIR, "videos")]
-    result = {"snapshots": [], "videos": []}
+    result = []
+    for event in events:
+        path = event.get("video_path", "").replace("\\", "/")  # fix path format
+        result.append(path)
+    return {"videos": result}
 
-    for folder, key in base_paths:
-        path = os.path.join(folder, date, f"{hour:02d}")
-        if os.path.exists(path):
-            files = os.listdir(path)
-            result[key] = [f"/{path}/{f}" for f in files]
-    return result
+@app.delete("/camera-files")
+def delete_camera_file(
+    camera_id: str = Query(...), 
+    video_path: str = Query(...)
+):
+    # 1. Xoá record trong Mongo
+    res = event_col.delete_many({
+        "camera_id": ObjectId(camera_id),
+        "video_path": video_path
+    })
+    # 2. Xoá file trên đĩa
+    fs_path = Path(video_path)
+    if fs_path.exists():
+        fs_path.unlink()
+
+    return {"deletedCount": res.deleted_count}
 
 
 @app.delete("/delete-camera")

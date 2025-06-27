@@ -1,8 +1,12 @@
 package com.example.frontend.service;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
@@ -11,13 +15,15 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
-import org.json.JSONArray;
-
 public class CameraService {
         private static final OkHttpClient client = new OkHttpClient();
         private static final String BASE_URL = "http://localhost:8000";
 
-        public static List<String> fetchCameraList() throws IOException {
+        private CameraService() {
+                // Ngăn tạo instance
+        }
+
+        public static List<Map<String, String>> fetchCameraList() throws IOException {
                 Request request = new Request.Builder()
                                 .url(BASE_URL + "/cameras")
                                 .build();
@@ -26,10 +32,20 @@ public class CameraService {
                         String json = response.body().string();
                         JSONArray array = new JSONArray(json);
 
-                        return array.toList().stream()
-                                        .map(obj -> (Map<?, ?>) obj)
-                                        .map(map -> map.get("url").toString())
-                                        .toList();
+                        List<Map<String, String>> result = new ArrayList<>();
+                        for (int i = 0; i < array.length(); i++) {
+                                JSONObject obj = array.getJSONObject(i);
+
+                                String id = obj.optString("id", "");
+                                String url = obj.optString("url", "");
+
+                                // Bỏ qua nếu thiếu id hoặc url
+                                if (!id.isEmpty() && !url.isEmpty()) {
+                                        result.add(Map.of("id", id, "url", url));
+                                }
+                        }
+
+                        return result;
                 }
         }
 
@@ -75,5 +91,46 @@ public class CameraService {
                                 .get()
                                 .build();
                 client.newCall(request).execute().close();
+        }
+
+        public static List<String> getCameraFiles(String cameraId) throws IOException {
+                HttpUrl.Builder urlBuilder = HttpUrl.parse(BASE_URL + "/camera-files").newBuilder();
+                urlBuilder.addQueryParameter("camera_id", cameraId);
+
+                Request request = new Request.Builder()
+                                .url(urlBuilder.build())
+                                .get()
+                                .build();
+
+                try (Response response = client.newCall(request).execute()) {
+                        if (!response.isSuccessful())
+                                throw new IOException("Unexpected code " + response);
+                        String json = response.body().string();
+                        JSONObject jsonObject = new JSONObject(json);
+                        JSONArray videoArray = jsonObject.getJSONArray("videos");
+
+                        List<String> videoPaths = new ArrayList<>();
+                        for (int i = 0; i < videoArray.length(); i++) {
+                                String path = videoArray.getString(i).replace("\\", "/");
+                                videoPaths.add(path);
+                        }
+                        return videoPaths;
+                }
+        }
+
+        public static void deleteVideoFile(String cameraId, String videoPath) throws IOException {
+                HttpUrl url = HttpUrl.parse(BASE_URL + "/camera-files").newBuilder()
+                                .addQueryParameter("camera_id", cameraId)
+                                .addQueryParameter("video_path", videoPath)
+                                .build();
+                Request request = new Request.Builder()
+                                .url(url)
+                                .delete()
+                                .build();
+                try (Response response = client.newCall(request).execute()) {
+                        if (!response.isSuccessful()) {
+                                throw new IOException("Delete failed: " + response);
+                        }
+                }
         }
 }

@@ -2,7 +2,7 @@ import cv2
 import os
 from datetime import datetime
 
-from config import VIDEO_CLIP_DURATION, VIDEO_OUTPUT_DIR, FRAME_WIDTH, FRAME_HEIGHT, FPS
+from config import VIDEO_CLIP_DURATION, VIDEO_OUTPUT_DIR, FPS
 
 
 # Vẽ khung phát hiện
