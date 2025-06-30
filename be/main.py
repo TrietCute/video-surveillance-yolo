@@ -1,30 +1,47 @@
-from fastapi import FastAPI, Query, Body
-from object_detection import detect
-from utils.logger import setup_logger, save_camera
+# main.py
+from fastapi import FastAPI, Query, Body, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, StreamingResponse
 from bson import ObjectId
 from pymongo import MongoClient
-from config import MONGO_URI, DB_NAME, COLLECTION_CAMERAS, COLLECTION_EVENTS
-import threading
+from threading import Thread
+import shutil, uuid, os, sys
+from pathlib import Path
+import cv2
+import numpy as np
+import time
+import asyncio
+from datetime import datetime
 import os
-from fastapi import HTTPException
+from config import VIDEO_OUTPUT_DIR, FPS
+from object_detection.detector import Detector 
+from utils.logger import setup_logger, save_camera, log_event
 
-active_threads = {}  # Global dict để quản lý các stream đang chạy
 
-# FastAPI App
+from config import MONGO_URI, DB_NAME, COLLECTION_CAMERAS, COLLECTION_EVENTS
+
+print("🔥 Python path:", sys.executable)
+
+os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)
+
 app = FastAPI()
 logger = setup_logger("main")
 
-# Mongo
+# MongoDB
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 camera_col = db[COLLECTION_CAMERAS]
 event_col = db[COLLECTION_EVENTS]
 
+# Directory
+TEST_VIDEO_DIR = "data/test-video"
+os.makedirs(TEST_VIDEO_DIR, exist_ok=True)
+
+# Stream management
+active_threads = {}
 
 @app.get("/")
 def root():
     return {"status": "API is running"}
-
 
 @app.post("/add-camera")
 def add_camera(url: str = Body(..., embed=True)):
@@ -34,73 +51,46 @@ def add_camera(url: str = Body(..., embed=True)):
     logger.info(f"📷 Thêm camera: {url}")
     return {"status": "added", "url": url, "id": str(cam_id)}
 
-
 @app.get("/cameras")
 def list_cameras():
     cams = list(camera_col.find({}, {"url": 1}))
     return [{"id": str(c["_id"]), "url": c["url"]} for c in cams]
 
-
 @app.get("/start-stream")
 def start_stream(url: str = Query(...)):
-    if url == "local":
-        source = 0  # webcam laptop
-    else:
-        source = url
+    source = "0" if url == "local" else url
     cam_id = save_camera(source)
     logger.info(f"▶️ Bắt đầu stream: {source}")
 
-    # Nếu đã chạy, không chạy lại
-    if url in active_threads:
+    if source in active_threads:
         return {"message": "Stream đã chạy", "camera_id": str(cam_id)}
 
-    t = threading.Thread(target=detect, args=(source,))
+    t = Thread(target=detect, args=(source,))
     t.daemon = True
     t.start()
     active_threads[source] = t
     return {"message": "Đang xử lý stream", "url": source, "camera_id": str(cam_id)}
 
-
 @app.get("/stop-stream")
 def stop_stream(url: str = Query(...)):
-    from object_detection import stop_detecting
-
     source_key = "0" if url == "local" else url
     stop_detecting(source_key)
-
     active_threads.pop(source_key, None)
     return {"message": f"Đã dừng stream {url}"}
-
-
 
 @app.get("/camera-files")
 def camera_files(camera_id: str):
     query = {"camera_id": ObjectId(camera_id)}
     events = event_col.find(query)
-
-    result = []
-    for event in events:
-        path = event.get("video_path", "").replace("\\", "/")  # fix path format
-        result.append(path)
-    return {"videos": result}
+    return {"videos": [event.get("video_path", "").replace("\\", "/") for event in events]}
 
 @app.delete("/camera-files")
-def delete_camera_file(
-    camera_id: str = Query(...), 
-    video_path: str = Query(...)
-):
-    # 1. Xoá record trong Mongo
-    res = event_col.delete_many({
-        "camera_id": ObjectId(camera_id),
-        "video_path": video_path
-    })
-    # 2. Xoá file trên đĩa
+def delete_camera_file(camera_id: str = Query(...), video_path: str = Query(...)):
+    res = event_col.delete_many({"camera_id": ObjectId(camera_id), "video_path": video_path})
     fs_path = Path(video_path)
     if fs_path.exists():
         fs_path.unlink()
-
     return {"deletedCount": res.deleted_count}
-
 
 @app.delete("/delete-camera")
 def delete_camera(url: str = Body(..., embed=True)):
@@ -108,3 +98,55 @@ def delete_camera(url: str = Body(..., embed=True)):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Camera not found")
     return {"status": "deleted", "url": url}
+
+@app.post("/test-video")
+async def upload_stream(file: UploadFile = File(...)):
+    try:
+        video_path = os.path.join("data/test-video", file.filename)
+        with open(video_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        Thread(target=process_and_detect, args=(video_path,)).start()
+        return {"status": "started", "file": video_path}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/test-video-stream")
+def test_video_stream():
+    def generate():
+        while True:
+            with buffer_lock:
+                frame = frame_buffer.get("live")
+            if frame is None:
+                print("[DEBUG] No frame available in buffer")
+                time.sleep(0.05)
+                continue
+
+            success, jpeg = cv2.imencode('.jpg', frame)
+            if not success:
+                print("[ERROR] Failed to encode frame")
+                continue
+
+            print("[DEBUG] Yielding frame")
+            yield (b"--frame\r\n"
+                   b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n")
+
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+detector = Detector()
+
+@app.websocket("/ws/video")
+async def websocket_video(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_bytes()
+            frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            annotated = detector.process_frame(frame)
+            _, jpeg = cv2.imencode(".jpg", annotated)
+            await websocket.send_bytes(jpeg.tobytes())
+            await asyncio.sleep(1 / 30)  # 30 FPS cố định
+    except WebSocketDisconnect:
+        print("[INFO] WebSocket disconnected")
+    finally:
+        detector.cleanup()

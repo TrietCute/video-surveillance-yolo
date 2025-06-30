@@ -13,6 +13,7 @@ public class VideoWebSocketClient extends WebSocketListener {
 
     private final OkHttpClient client;
     private WebSocket webSocket;
+
     private final Consumer<BufferedImage> onFrameReceived;
 
     public VideoWebSocketClient(Consumer<BufferedImage> onFrameReceived) {

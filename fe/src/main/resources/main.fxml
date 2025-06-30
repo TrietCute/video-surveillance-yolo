@@ -5,39 +5,39 @@
 <?import javafx.scene.text.*?>
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.paint.Color?>
+<?import javafx.scene.input.*?>
+<?import javafx.scene.image.*?>
 
-<VBox spacing="15"
-      xmlns="http://javafx.com/javafx/21"
-      xmlns:fx="http://javafx.com/fxml"
-      fx:controller="com.example.frontend.controller.MainController"
-      alignment="TOP_CENTER"
-      style="-fx-background-color: #f9f9f9;">
+<BorderPane xmlns="http://javafx.com/javafx/21"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.example.frontend.controller.MainController"
+            style="-fx-background-color: #f9f9f9;">
 
-    <padding>
-        <Insets top="30" right="30" bottom="30" left="30" />
-    </padding>
+    <!-- Header -->
+    <top>
+        <HBox spacing="20" alignment="CENTER_LEFT" style="-fx-padding: 20; -fx-background-color: #eeeeee;">
+            <Label text="🎥 Hệ thống giám sát thông minh"
+                   style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #333;" />
 
-    <Label text="🎥 Hệ thống giám sát thông minh"
-           style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #333;" />
+            <Region fx:id="spacer" HBox.hgrow="ALWAYS"/>
 
-    <!-- Nhập URL camera -->
-    <HBox spacing="10" alignment="CENTER">
-        <TextField fx:id="cameraUrlInput"
-                   promptText="Nhập URL camera (http://...)"
-                   style="-fx-font-size: 14px; -fx-pref-width: 400;"
-                   HBox.hgrow="ALWAYS"/>
-        <Button text="➕ Thêm"
-                onAction="#handleAddCamera"
-                style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;" />
-    </HBox>
+            <Button text="➕ Thêm Camera"
+                    onAction="#handleAddCamera"
+                    style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;" />
 
-    <!-- Danh sách camera -->
-    <Label text="📋 Danh sách camera đang theo dõi:"
-           style="-fx-font-size: 16px; -fx-font-weight: bold;" />
+            <Button text="📁 Thêm video MP4 (Test)"
+                    onAction="#handleAddTestVideo"
+                    style="-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;" />
+        </HBox>
+    </top>
 
-    <VBox fx:id="cameraListContainer" spacing="10" prefWidth="600">
-        <!-- Mỗi dòng sẽ là một GridPane có 2 cột -->
-        <!-- Cột 1: camera URL (Label), Cột 2: HBox chứa các nút -->
-    </VBox>
+    <!-- Danh sách camera theo khu vực -->
+    <center>
+        <ScrollPane fitToWidth="true" style="-fx-padding: 20;">
+            <VBox fx:id="cameraLocationContainer" spacing="15" prefWidth="600">
+                <!-- Mỗi khu vực (Phòng Khách, Bếp...) sẽ là một TitledPane với danh sách camera -->
+            </VBox>
+        </ScrollPane>
+    </center>
 
-</VBox>
+</BorderPane>

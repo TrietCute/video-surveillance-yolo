@@ -1,9 +1,9 @@
 @echo off
-title 🔁 Đang chạy Backend (FastAPI)
-start cmd /k "cd be && uvicorn main:app --reload"
 
-timeout /t 3
+start cmd /k "cd be && uvicorn main:app"
 
-title 🖥️ Đang chạy Frontend (JavaFX)
+timeout /t 3 >nul
+
 cd fe
 mvn javafx:run
+

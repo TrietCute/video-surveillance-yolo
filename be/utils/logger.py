@@ -42,26 +42,29 @@ def save_camera(url: str) -> ObjectId:
     return result.inserted_id
 
 
-# Ghi log sự kiện phát hiện
-def log_event(label, conf, source=None, video_path=None):
-    now = datetime.now()
-    timestamp = now.isoformat()
-    source_str = str(source) if source is not None else None
-    camera_id = save_camera(source_str) if source_str else None
-    if camera_id is None:
-        logger.error("❌ Không tìm thấy hoặc lưu camera. Bỏ qua sự kiện.")
-        return
+# utils/logger.py
+def log_event(object_name, confidence, camera_id, video_path):
+    from config import DB_NAME, COLLECTION_EVENTS, MONGO_URI
+    from pymongo import MongoClient
+    from datetime import datetime
 
-    doc = {
-        "timestamp": timestamp,
-        "object": label,
-        "confidence": round(float(conf), 2),
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    events = db[COLLECTION_EVENTS]
+
+    # Ensure video_path is string
+    if not isinstance(video_path, str):
+        video_path = str(video_path)
+
+    event = {
+        "timestamp": datetime.now().isoformat(),
+        "object": object_name,
+        "confidence": round(confidence, 2),
         "camera_id": camera_id,
+        "video_path": video_path,
     }
 
-    if video_path:
-        doc["video_path"] = video_path
-        logger.info(f"🎞  Clip lưu tại: {video_path}")
+    print(f"[INFO] 🎞  Clip lưu tại: {video_path}")
+    print(f"[INFO] ✅ Ghi log sự kiện: {object_name} ({confidence})")
 
-    event_collection.insert_one(doc)
-    logger.info(f"✅ Ghi log sự kiện: {label} ({conf:.2f})")
+    events.insert_one(event)
