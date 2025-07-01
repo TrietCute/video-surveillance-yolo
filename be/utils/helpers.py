@@ -6,24 +6,17 @@ from config import VIDEO_CLIP_DURATION, VIDEO_OUTPUT_DIR, FPS
 
 
 # Vẽ khung phát hiện
-def draw_boxes(frame, results):
-    for box in results.boxes:
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        conf = float(box.conf[0])
-        cls = int(box.cls[0])
-        label = f"{results.names[cls]} {conf:.2f}"
+def draw_boxes(frame, boxes):
+    if boxes is None:
+        return frame
+    for i in range(len(boxes.xyxy)):
+        x1, y1, x2, y2 = map(int, boxes.xyxy[i])
+        conf = float(boxes.conf[i])
+        cls_id = int(boxes.cls[i])
+        label = str(cls_id)
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(
-            frame,
-            label,
-            (x1, y1 - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            2,
-        )
+        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
     return frame
-
 
 # Ghi lại video clip khi phát hiện
 import cv2

@@ -134,18 +134,38 @@ def test_video_stream():
 
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 detector = Detector()
-
 @app.websocket("/ws/video")
 async def websocket_video(websocket: WebSocket):
     await websocket.accept()
+    import asyncio, time
+
+    last_detect_time = 0
+
     try:
         while True:
             data = await websocket.receive_bytes()
             frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-            annotated = detector.process_frame(frame)
+
+            # Always update the latest frame for streaming
+            with detector.lock:
+                detector.latest_raw_frame = frame.copy()
+
+            # Run detection in the background if enough time has passed
+            now = time.time()
+            if now - last_detect_time >= 1:
+                Thread(target=detector.detect_on_frame, args=(frame.copy(),)).start()
+                last_detect_time = now
+
+            # Always send the latest annotated frame (may be slightly behind)
+            annotated = detector.get_latest_annotated_frame()
+            if annotated is None:
+                annotated = frame
+
             _, jpeg = cv2.imencode(".jpg", annotated)
             await websocket.send_bytes(jpeg.tobytes())
-            await asyncio.sleep(1 / 30)  # 30 FPS cố định
+
+            await asyncio.sleep(1 / 30)  # ~30 FPS
+
     except WebSocketDisconnect:
         print("[INFO] WebSocket disconnected")
     finally:

@@ -2,11 +2,13 @@ import cv2
 import os
 import time
 from datetime import datetime
-from threading import Lock
+from threading import Lock, Thread
 from ultralytics import YOLO
 from utils.helpers import draw_boxes
 from utils.logger import log_event
 from config import VIDEO_OUTPUT_DIR, FPS
+from .alert_logic import check_dangerous_animal, check_weapon
+from .pose_analyzer import analyze_pose
 
 
 class Detector:
@@ -22,7 +24,11 @@ class Detector:
 
         self.out_clean = None
         self.out_annotated = None
+        self.path_clean = ""
+
         self.lock = Lock()
+        self.latest_raw_frame = None
+        self.latest_boxes = None
 
     def contains_person_or_animal(self, results, threshold=0.5):
         for r in results:
@@ -45,41 +51,70 @@ class Detector:
         return (cv2.VideoWriter(raw_path, fourcc, FPS, (w, h)),
                 cv2.VideoWriter(anno_path, fourcc, FPS, (w, h))), (raw_path, anno_path)
 
-    def process_frame(self, frame):
+    def outside_working_hours(self):
+        now = datetime.now()
+        return now.hour < 8 or now.hour >= 18
+
+    def detect_on_frame(self, frame):
         now = time.time()
-        annotated_frame = frame.copy()
 
-        if now - self.last_detect_time >= self.DETECT_INTERVAL:
-            results = self.model(frame)
-            abnormal, conf = self.contains_person_or_animal(results)
+        with self.lock:
+            self.latest_raw_frame = frame.copy()
 
-            if abnormal and not self.abnormal_mode:
-                self.abnormal_mode = True
-                self.start_abnormal_time = now
-                writers, paths = self.start_video_writers(frame, "ws")
-                self.out_clean, self.out_annotated = writers
-                path_clean, path_annotated = paths
-                log_event("abnormal_ws", conf, "ws-stream", path_clean)
+        if now - self.last_detect_time < self.DETECT_INTERVAL:
+            return  # chưa tới thời gian detect
 
-            if self.abnormal_mode:
-                annotated_frame = draw_boxes(frame.copy(), results[0])
+        results = self.model(frame)
+        self.latest_boxes = results[0].boxes if len(results) > 0 else None
+        abnormal, conf = self.contains_person_or_animal(results)
+
+        # logic
+        analyze_pose(results, frame, source_id="ws-stream")
+        check_dangerous_animal(results, source_id="ws-stream", video_path=self.path_clean if self.abnormal_mode else "")
+        check_weapon(results, source_id="ws-stream", video_path=self.path_clean if self.abnormal_mode else "")
+
+        for r in results:
+            for box in r.boxes:
+                label = self.model.names[int(box.cls)]
+                conf = float(box.conf)
+                if label == "person" and self.outside_working_hours():
+                    log_event("person_outside_working_hours", conf, "ws-stream", video_path="")
+
+        if abnormal and not self.abnormal_mode:
+            self.abnormal_mode = True
+            self.start_abnormal_time = now
+            writers, paths = self.start_video_writers(frame, "ws")
+            self.out_clean, self.out_annotated = writers
+            self.path_clean, _ = paths
+            log_event("abnormal_ws", conf, "ws-stream", self.path_clean)
+
+        if self.abnormal_mode:
+            annotated_frame = draw_boxes(frame.copy(), results[0].boxes)
+            if self.out_clean:
+                self.out_clean.write(frame)
+            if self.out_annotated:
+                self.out_annotated.write(annotated_frame)
+
+            if now - self.start_abnormal_time >= self.ABNORMAL_DURATION:
+                self.abnormal_mode = False
                 if self.out_clean:
-                    self.out_clean.write(frame)
+                    self.out_clean.release()
+                    self.out_clean = None
                 if self.out_annotated:
-                    self.out_annotated.write(annotated_frame)
+                    self.out_annotated.release()
+                    self.out_annotated = None
+                self.path_clean = ""
 
-                if now - self.start_abnormal_time >= self.ABNORMAL_DURATION:
-                    self.abnormal_mode = False
-                    if self.out_clean:
-                        self.out_clean.release()
-                        self.out_clean = None
-                    if self.out_annotated:
-                        self.out_annotated.release()
-                        self.out_annotated = None
+        self.last_detect_time = now
 
-            self.last_detect_time = now
-
-        return annotated_frame
+    def get_latest_annotated_frame(self):
+        with self.lock:
+            if self.latest_raw_frame is None:
+                return None
+            annotated = self.latest_raw_frame.copy()
+            if self.latest_boxes is not None:
+                annotated = draw_boxes(annotated, self.latest_boxes)
+            return annotated
 
     def cleanup(self):
         if self.out_clean:

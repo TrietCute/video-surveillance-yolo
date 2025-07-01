@@ -1,14 +1,9 @@
-# pose_analyzer.py
 import numpy as np
 from utils.logger import log_event
 
 def is_person_lying_down(keypoints):
-    """
-    Xác định người nằm nếu vai trái-phải và hông trái-phải gần nhau theo trục y
-    """
-    if keypoints.shape[0] < 6:
+    if keypoints.shape[0] < 13:
         return False
-
     left_shoulder = keypoints[5]
     right_shoulder = keypoints[6]
     left_hip = keypoints[11]
@@ -16,9 +11,8 @@ def is_person_lying_down(keypoints):
 
     avg_shoulder_y = (left_shoulder[1] + right_shoulder[1]) / 2
     avg_hip_y = (left_hip[1] + right_hip[1]) / 2
-
     vertical_diff = abs(avg_shoulder_y - avg_hip_y)
-    return vertical_diff < 30  # tùy chỉnh ngưỡng này
+    return vertical_diff < 30
 
 def analyze_pose(results, frame, source_id="unknown"):
     for r in results:
