@@ -19,19 +19,10 @@ def draw_boxes(frame, boxes):
     return frame
 
 # Ghi lại video clip khi phát hiện
-import cv2
-import os
-from datetime import datetime
-from config import VIDEO_OUTPUT_DIR, FPS, VIDEO_CLIP_DURATION
-
-def record_clip(source, label):
-    # Chuyển source = 0 nếu là "0" để mở webcam
+def record_clip(source, label, room_id=None):
     actual_source = 0 if str(source) == "0" else str(source)
-    if str(source) == "0":
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    else:
-        cap = cv2.VideoCapture(str(source))
-    
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) if str(source) == "0" else cv2.VideoCapture(str(source))
+
     if not cap.isOpened():
         print(f"[⚠️] Không thể mở nguồn video: {actual_source}")
         return None
@@ -43,15 +34,13 @@ def record_clip(source, label):
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Tạo thư mục theo ngày/giờ
-    folder = os.path.join(VIDEO_OUTPUT_DIR, date_str, hour_str)
+    # Thư mục lưu theo room (nếu có)
+    folder = os.path.join(VIDEO_OUTPUT_DIR, room_id if room_id else "unknown", date_str, hour_str)
     os.makedirs(folder, exist_ok=True)
 
-    # Tên file và đường dẫn
     filename = f"{label}_{now.strftime('%M%S')}.mp4"
     filepath = os.path.join(folder, filename)
 
-    # Ghi video
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(filepath, fourcc, FPS, (frame_width, frame_height))
 
@@ -70,4 +59,5 @@ def record_clip(source, label):
 
     print(f"[🎞️] Clip đã ghi: {filepath}")
     return filepath
+
 

@@ -3,11 +3,9 @@ MONGO_URI = "mongodb+srv://Tris:Ttn2911%40@cluster0.etkomsx.mongodb.net/?retryWr
 DB_NAME = "surveillance"
 COLLECTION_EVENTS = "events"
 COLLECTION_CAMERAS = "cameras"
-
+COLLECTION_ROOMS = "rooms"
 
 # Video clip ghi lại khi có đối tượng
-VIDEO_CLIP_DURATION = 10         # giây
-VIDEO_OUTPUT_DIR = "videos"     # thư mục lưu clip
 ABNORMAL_END_DELAY = 3  # giây chờ trước khi kết thúc video nếu không còn bất thường
 
 VIDEO_OUTPUT_DIR = "data/output"

@@ -17,7 +17,7 @@ from object_detection.detector import Detector
 from utils.logger import setup_logger, save_camera, log_event
 
 
-from config import MONGO_URI, DB_NAME, COLLECTION_CAMERAS, COLLECTION_EVENTS
+from config import MONGO_URI, DB_NAME, COLLECTION_CAMERAS, COLLECTION_EVENTS, COLLECTION_ROOMS
 
 print("🔥 Python path:", sys.executable)
 
@@ -31,6 +31,7 @@ client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 camera_col = db[COLLECTION_CAMERAS]
 event_col = db[COLLECTION_EVENTS]
+room_col = db[COLLECTION_ROOMS]
 
 # Directory
 TEST_VIDEO_DIR = "data/test-video"
@@ -44,17 +45,17 @@ def root():
     return {"status": "API is running"}
 
 @app.post("/add-camera")
-def add_camera(url: str = Body(..., embed=True)):
+def add_camera(url: str = Body(...), room_id: str = Body(...)):
     if url == "local":
         url = "0"
-    cam_id = save_camera(url)
-    logger.info(f"📷 Thêm camera: {url}")
-    return {"status": "added", "url": url, "id": str(cam_id)}
+    cam_id = camera_col.insert_one({"url": url, "room_id": ObjectId(room_id)}).inserted_id
+    logger.info(f"📷 Thêm camera: {url} vào phòng {room_id}")
+    return {"status": "added", "url": url, "id": str(cam_id), "room_id": room_id}
 
 @app.get("/cameras")
 def list_cameras():
-    cams = list(camera_col.find({}, {"url": 1}))
-    return [{"id": str(c["_id"]), "url": c["url"]} for c in cams]
+    cams = list(camera_col.find({}, {"url": 1, "room_id": 1}))
+    return [{"id": str(c["_id"]), "url": c["url"], "room_id": str(c.get("room_id", ""))} for c in cams]
 
 @app.get("/start-stream")
 def start_stream(url: str = Query(...)):
@@ -77,6 +78,7 @@ def stop_stream(url: str = Query(...)):
     stop_detecting(source_key)
     active_threads.pop(source_key, None)
     return {"message": f"Đã dừng stream {url}"}
+
 
 @app.get("/camera-files")
 def camera_files(camera_id: str):
@@ -133,7 +135,9 @@ def test_video_stream():
                    b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n")
 
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+
 detector = Detector()
+
 @app.websocket("/ws/video")
 async def websocket_video(websocket: WebSocket):
     await websocket.accept()
@@ -170,3 +174,15 @@ async def websocket_video(websocket: WebSocket):
         print("[INFO] WebSocket disconnected")
     finally:
         detector.cleanup()
+
+#Room management
+@app.get("/rooms")
+def list_rooms():
+    rooms = list(room_col.find())
+    return [{"id": str(r["_id"]), "name": r["name"]} for r in rooms]
+
+@app.post("/rooms")
+def add_room(name: str = Body(..., embed=True)):
+    room = {"name": name}
+    result = room_col.insert_one(room)
+    return {"id": str(result.inserted_id), "name": name}
