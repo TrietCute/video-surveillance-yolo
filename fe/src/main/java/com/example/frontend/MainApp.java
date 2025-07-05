@@ -9,7 +9,7 @@ public class MainApp extends Application {
     @Override
     public void start(Stage stage) throws Exception {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/main.fxml"));
-        Scene scene = new Scene(loader.load());
+        Scene scene = new Scene(loader.load(), 950, 750);
         stage.setTitle("Camera Surveillance System");
         stage.setScene(scene);
         stage.show();
