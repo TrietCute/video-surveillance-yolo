@@ -59,7 +59,7 @@
             <version>1.5.11</version>
         </dependency>
 
-        <!-- WebSocket (nếu cần) -->
+        <!-- WebSocket -->
         <dependency>
             <groupId>org.java-websocket</groupId>
             <artifactId>Java-WebSocket</artifactId>
