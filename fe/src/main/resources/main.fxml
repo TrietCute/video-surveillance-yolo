@@ -1,43 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<?import javafx.scene.control.*?>
-<?import javafx.scene.layout.*?>
-<?import javafx.scene.text.*?>
 <?import javafx.geometry.Insets?>
-<?import javafx.scene.paint.Color?>
-<?import javafx.scene.input.*?>
-<?import javafx.scene.image.*?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
 
-<BorderPane xmlns="http://javafx.com/javafx/21"
-            xmlns:fx="http://javafx.com/fxml"
-            fx:controller="com.example.frontend.controller.MainController"
-            style="-fx-background-color: #f9f9f9;">
+<VBox alignment="TOP_CENTER" spacing="15" style="-fx-background-color: #f4f7f6;" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.example.frontend.controller.MainController">
+    <padding>
+        <Insets bottom="30" left="30" right="30" top="30" />
+    </padding>
 
-    <!-- Header -->
-    <top>
-        <HBox spacing="20" alignment="CENTER_LEFT" style="-fx-padding: 20; -fx-background-color: #eeeeee;">
-            <Label text="🎥 Hệ thống giám sát thông minh"
-                   style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #333;" />
+    <Label style="-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: #333;" text="🏢 Hệ thống Quản lý Giám sát" />
+    <Label style="-fx-font-size: 14px; -fx-text-fill: #666;" text="Quản lý camera thông minh" />
 
-            <Region fx:id="spacer" HBox.hgrow="ALWAYS"/>
+    <HBox alignment="CENTER" spacing="10" maxWidth="600">
+        <TextField fx:id="roomNameInput" HBox.hgrow="ALWAYS" promptText="Nhập tên phòng mới..." style="-fx-font-size: 14px;" />
+        <Button onAction="#handleAddRoom" style="-fx-background-color: #007bff; -fx-text-fill: white; -fx-font-weight: bold;" text="➕ Thêm Phòng" />
+    </HBox>
 
-            <Button text="➕ Thêm Camera"
-                    onAction="#handleAddCamera"
-                    style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;" />
+    <Button onAction="#handleTestWithVideo" style="-fx-background-color: #6c757d; -fx-text-fill: white; -fx-font-weight: bold; -fx-pref-width: 600px;" text="🎬 Kiểm tra bằng video có sẵn" />
 
-            <Button text="📁 Thêm video MP4 (Test)"
-                    onAction="#handleAddTestVideo"
-                    style="-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;" />
-        </HBox>
-    </top>
+    <Label style="-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #444;" text="Danh sách các phòng:" />
 
-    <!-- Danh sách camera theo khu vực -->
-    <center>
-        <ScrollPane fitToWidth="true" style="-fx-padding: 20;">
-            <VBox fx:id="cameraLocationContainer" spacing="15" prefWidth="600">
-                <!-- Mỗi khu vực (Phòng Khách, Bếp...) sẽ là một TitledPane với danh sách camera -->
-            </VBox>
-        </ScrollPane>
-    </center>
+    <ScrollPane fitToWidth="true" style="-fx-background-color: transparent; -fx-border-color: #ccc; -fx-border-radius: 5;">
+        <VBox fx:id="roomListContainer" spacing="10" style="-fx-padding: 10;" />
+    </ScrollPane>
 
-</BorderPane>
+</VBox>

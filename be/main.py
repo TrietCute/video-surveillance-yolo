@@ -1,23 +1,27 @@
 # main.py
-from fastapi import FastAPI, Query, Body, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+import sys
+from pathlib import Path
+from fastapi import FastAPI, Query, HTTPException, WebSocket, WebSocketDisconnect
 from bson import ObjectId
 from pymongo import MongoClient
+from pydantic import BaseModel
 from threading import Thread
-import shutil, uuid, os, sys
-from pathlib import Path
+import os
 import cv2
 import numpy as np
 import time
 import asyncio
-from datetime import datetime
-import os
-from config import VIDEO_OUTPUT_DIR, FPS
-from object_detection.detector import Detector 
-from utils.logger import setup_logger, save_camera, log_event
 
+# --- Block code đảm bảo import hoạt động đáng tin cậy ---
+FILE = Path(__file__).resolve()
+ROOT = FILE.parents[0]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+# -----------------------------------------------------------
 
-from config import MONGO_URI, DB_NAME, COLLECTION_CAMERAS, COLLECTION_EVENTS, COLLECTION_ROOMS
+from config import MONGO_URI, DB_NAME, COLLECTION_CAMERAS, COLLECTION_EVENTS, COLLECTION_ROOMS, VIDEO_OUTPUT_DIR
+from object_detection.detector import Detector
+from utils.logger import setup_logger
 
 print("🔥 Python path:", sys.executable)
 
@@ -26,163 +30,187 @@ os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)
 app = FastAPI()
 logger = setup_logger("main")
 
-# MongoDB
+# Kết nối MongoDB
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 camera_col = db[COLLECTION_CAMERAS]
 event_col = db[COLLECTION_EVENTS]
 room_col = db[COLLECTION_ROOMS]
 
-# Directory
-TEST_VIDEO_DIR = "data/test-video"
-os.makedirs(TEST_VIDEO_DIR, exist_ok=True)
+# Khởi tạo bộ phát hiện đối tượng
+detector = Detector()
 
-# Stream management
-active_threads = {}
+# Pydantic Models cho request body
+class CameraIn(BaseModel):
+    url: str
+    room_id: str
+
+class CameraUpdateIn(BaseModel):
+    url: str
+
+class CameraDeleteIn(BaseModel):
+    url: str
+
+class RoomIn(BaseModel):
+    name: str
 
 @app.get("/")
 def root():
     return {"status": "API is running"}
 
-@app.post("/add-camera")
-def add_camera(url: str = Body(...), room_id: str = Body(...)):
-    if url == "local":
-        url = "0"
-    cam_id = camera_col.insert_one({"url": url, "room_id": ObjectId(room_id)}).inserted_id
-    logger.info(f"📷 Thêm camera: {url} vào phòng {room_id}")
-    return {"status": "added", "url": url, "id": str(cam_id), "room_id": room_id}
-
-@app.get("/cameras")
-def list_cameras():
-    cams = list(camera_col.find({}, {"url": 1, "room_id": 1}))
-    return [{"id": str(c["_id"]), "url": c["url"], "room_id": str(c.get("room_id", ""))} for c in cams]
-
-@app.get("/start-stream")
-def start_stream(url: str = Query(...)):
-    source = "0" if url == "local" else url
-    cam_id = save_camera(source)
-    logger.info(f"▶️ Bắt đầu stream: {source}")
-
-    if source in active_threads:
-        return {"message": "Stream đã chạy", "camera_id": str(cam_id)}
-
-    t = Thread(target=detect, args=(source,))
-    t.daemon = True
-    t.start()
-    active_threads[source] = t
-    return {"message": "Đang xử lý stream", "url": source, "camera_id": str(cam_id)}
-
-@app.get("/stop-stream")
-def stop_stream(url: str = Query(...)):
-    source_key = "0" if url == "local" else url
-    stop_detecting(source_key)
-    active_threads.pop(source_key, None)
-    return {"message": f"Đã dừng stream {url}"}
-
-
-@app.get("/camera-files")
-def camera_files(camera_id: str):
-    query = {"camera_id": ObjectId(camera_id)}
-    events = event_col.find(query)
-    return {"videos": [event.get("video_path", "").replace("\\", "/") for event in events]}
-
-@app.delete("/camera-files")
-def delete_camera_file(camera_id: str = Query(...), video_path: str = Query(...)):
-    res = event_col.delete_many({"camera_id": ObjectId(camera_id), "video_path": video_path})
-    fs_path = Path(video_path)
-    if fs_path.exists():
-        fs_path.unlink()
-    return {"deletedCount": res.deleted_count}
-
-@app.delete("/delete-camera")
-def delete_camera(url: str = Body(..., embed=True)):
-    result = camera_col.delete_one({"url": url})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Camera not found")
-    return {"status": "deleted", "url": url}
-
-@app.post("/test-video")
-async def upload_stream(file: UploadFile = File(...)):
-    try:
-        video_path = os.path.join("data/test-video", file.filename)
-        with open(video_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-
-        Thread(target=process_and_detect, args=(video_path,)).start()
-        return {"status": "started", "file": video_path}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-@app.get("/test-video-stream")
-def test_video_stream():
-    def generate():
-        while True:
-            with buffer_lock:
-                frame = frame_buffer.get("live")
-            if frame is None:
-                print("[DEBUG] No frame available in buffer")
-                time.sleep(0.05)
-                continue
-
-            success, jpeg = cv2.imencode('.jpg', frame)
-            if not success:
-                print("[ERROR] Failed to encode frame")
-                continue
-
-            print("[DEBUG] Yielding frame")
-            yield (b"--frame\r\n"
-                   b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n")
-
-    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
-
-detector = Detector()
-
-@app.websocket("/ws/video")
-async def websocket_video(websocket: WebSocket):
-    await websocket.accept()
-    import asyncio, time
-
-    last_detect_time = 0
-
-    try:
-        while True:
-            data = await websocket.receive_bytes()
-            frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-
-            # Always update the latest frame for streaming
-            with detector.lock:
-                detector.latest_raw_frame = frame.copy()
-
-            # Run detection in the background if enough time has passed
-            now = time.time()
-            if now - last_detect_time >= 1:
-                Thread(target=detector.detect_on_frame, args=(frame.copy(),)).start()
-                last_detect_time = now
-
-            # Always send the latest annotated frame (may be slightly behind)
-            annotated = detector.get_latest_annotated_frame()
-            if annotated is None:
-                annotated = frame
-
-            _, jpeg = cv2.imencode(".jpg", annotated)
-            await websocket.send_bytes(jpeg.tobytes())
-
-            await asyncio.sleep(1 / 30)  # ~30 FPS
-
-    except WebSocketDisconnect:
-        print("[INFO] WebSocket disconnected")
-    finally:
-        detector.cleanup()
-
-#Room management
+# --- Quản lý Phòng ---
 @app.get("/rooms")
 def list_rooms():
     rooms = list(room_col.find())
     return [{"id": str(r["_id"]), "name": r["name"]} for r in rooms]
 
 @app.post("/rooms")
-def add_room(name: str = Body(..., embed=True)):
-    room = {"name": name}
-    result = room_col.insert_one(room)
-    return {"id": str(result.inserted_id), "name": name}
+def add_room(room: RoomIn):
+    # Kiểm tra phòng đã tồn tại chưa
+    existing_room = room_col.find_one({"name": room.name})
+    if existing_room:
+        raise HTTPException(status_code=400, detail=f"Room with name '{room.name}' already exists.")
+    
+    new_room_data = {"name": room.name}
+    result = room_col.insert_one(new_room_data)
+    logger.info(f"🚪 Đã thêm phòng: {room.name}")
+    return {"id": str(result.inserted_id), "name": room.name}
+
+
+
+@app.delete("/rooms/{room_id}")
+def delete_room(room_id: str):
+    try:
+        # Chuyển đổi room_id từ string sang ObjectId
+        object_id = ObjectId(room_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid room_id format.")
+
+    # Xóa phòng trong collection rooms
+    result = room_col.delete_one({"_id": object_id})
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Room not found.")
+
+    # (Nâng cao): Bạn cũng nên xóa các camera thuộc về phòng này
+    # camera_col.delete_many({"room_id": object_id})
+    # logger.info(f"Đã xóa các camera thuộc phòng {room_id}")
+
+    logger.info(f"🚪 Đã xóa phòng: {room_id}")
+    return {"status": "deleted", "id": room_id}
+
+
+# --- Quản lý Camera ---
+@app.post("/add-camera")
+def add_camera(camera: CameraIn):
+    if camera.url == "local":
+        camera.url = "0"
+    cam_id = camera_col.insert_one({"url": camera.url, "room_id": ObjectId(camera.room_id)}).inserted_id
+    logger.info(f"📷 Thêm camera: {camera.url} vào phòng {camera.room_id}")
+    return {"status": "added", "url": camera.url, "id": str(cam_id), "room_id": camera.room_id}
+
+@app.get("/cameras")
+def list_cameras():
+    cams = list(camera_col.find({}, {"url": 1, "room_id": 1}))
+    return [{"id": str(c["_id"]), "url": c["url"], "room_id": str(c.get("room_id", ""))} for c in cams]
+
+@app.delete("/delete-camera")
+def delete_camera(camera: CameraDeleteIn):
+    result = camera_col.delete_one({"url": camera.url})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    logger.info(f"🗑️ Đã xóa camera: {camera.url}")
+    return {"status": "deleted", "url": camera.url}
+@app.put("/cameras/{camera_id}")
+def update_camera(camera_id: str, camera_data: CameraUpdateIn):
+    try:
+        object_id = ObjectId(camera_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid camera_id format.")
+
+    result = camera_col.update_one(
+        {"_id": object_id},
+        {"$set": {"url": camera_data.url}}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Camera not found.")
+
+    logger.info(f"✏️ Đã cập nhật URL camera {camera_id}")
+    # Trả về camera đã được cập nhật
+    updated_camera = camera_col.find_one({"_id": object_id})
+    return {
+        "id": str(updated_camera["_id"]),
+        "url": updated_camera["url"],
+        "room_id": str(updated_camera.get("room_id", ""))
+    }
+
+# --- Quản lý File Sự kiện ---
+@app.get("/camera-files")
+def camera_files(camera_id: str = Query(...)):
+    try:
+        query = {"camera_id": ObjectId(camera_id)}
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid camera_id format.")
+        
+    events = event_col.find(query)
+    return {"videos": [event.get("video_path", "").replace("\\", "/") for event in events]}
+
+@app.delete("/camera-files")
+def delete_camera_file(camera_id: str = Query(...), video_path: str = Query(...)):
+    try:
+        res = event_col.delete_many({"camera_id": ObjectId(camera_id), "video_path": video_path})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid camera_id format.")
+
+    fs_path = Path(video_path)
+    if fs_path.exists():
+        try:
+            fs_path.unlink()
+            logger.info(f"📹 Đã xóa file video: {video_path}")
+        except OSError as e:
+            logger.error(f"Lỗi khi xóa file {video_path}: {e}")
+            raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
+            
+    return {"deletedCount": res.deleted_count}
+
+# --- WebSocket cho Video Stream và Phát hiện ---
+@app.websocket("/ws/video")
+async def websocket_video(websocket: WebSocket):
+    await websocket.accept()
+    logger.info("🔌 WebSocket client connected.")
+    
+    last_detect_time = 0
+    detection_interval = 1.0
+
+    try:
+        while True:
+            data = await websocket.receive_bytes()
+            frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+
+            if frame is None:
+                continue
+
+            with detector.lock:
+                detector.latest_raw_frame = frame.copy()
+
+            now = time.time()
+            if now - last_detect_time >= detection_interval:
+                Thread(target=detector.detect_on_frame, args=(frame.copy(),)).start()
+                last_detect_time = now
+
+            annotated_frame = detector.get_latest_annotated_frame()
+            if annotated_frame is None:
+                annotated_frame = frame
+
+            _, jpeg = cv2.imencode(".jpg", annotated_frame)
+            await websocket.send_bytes(jpeg.tobytes())
+
+            await asyncio.sleep(1 / 30)
+
+    except WebSocketDisconnect:
+        logger.info("🔌 WebSocket client disconnected.")
+    except Exception as e:
+        logger.error(f"Lỗi WebSocket: {e}")
+    finally:
+        detector.cleanup()

@@ -1,263 +1,116 @@
 package com.example.frontend.controller;
 
-import java.awt.Desktop;
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
-
-import com.example.frontend.service.CameraService;
-
-import javafx.application.Platform;
+import com.example.frontend.model.Camera;
+import com.example.frontend.service.ApiService;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonType;
-import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
-import javafx.scene.control.MenuItem;
-import javafx.scene.control.TreeCell;
-import javafx.scene.control.TreeItem;
-import javafx.scene.control.TreeView;
-import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
-import javafx.scene.layout.BorderPane;
+import javafx.scene.control.ListView;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
-import javafx.scene.media.Media;
-import javafx.scene.media.MediaPlayer;
-import javafx.scene.media.MediaView;
 import javafx.stage.Stage;
-import javafx.util.Duration;
+
+import java.awt.Desktop;
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
 
 public class DetailView {
 
-    private static final Path PROJECT_BE = Paths.get(System.getProperty("user.dir"))
-            .resolveSibling("be");
-    private static MediaPlayer mediaPlayer;
+    // THÊM THAM SỐ Runnable onUpdateSuccess
+    public static void open(Camera camera, Runnable onUpdateSuccess) {
+        Stage stage = new Stage();
+        stage.setTitle("Chi tiết cho Camera ID: " + camera.getId());
 
-    private DetailView() {
-    }
+        VBox root = new VBox(10);
+        root.setPadding(new Insets(15));
+        root.setAlignment(Pos.CENTER);
 
-    public static void open(String cameraId) {
-        List<String> rawPaths;
+        Label titleLabel = new Label("Danh sách video sự kiện đã ghi");
+        titleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+
+        ListView<String> videoListView = new ListView<>();
+        
         try {
-            rawPaths = CameraService.getCameraFiles(cameraId);
-        } catch (IOException ex) {
-            ex.printStackTrace();
-            new Alert(Alert.AlertType.ERROR,
-                    "Không thể lấy video từ server:\n" + ex.getMessage(),
-                    ButtonType.OK).showAndWait();
-            return;
+            ApiService apiService = new ApiService();
+            List<String> videoPaths = apiService.getEventVideos(camera.getId());
+            if (videoPaths.isEmpty()) {
+                videoListView.getItems().add("Không có video sự kiện nào được ghi lại.");
+            } else {
+                videoListView.getItems().addAll(videoPaths);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            videoListView.getItems().add("Lỗi khi tải danh sách video.");
         }
 
-        // Build Tree
-        TreeItem<VideoNode> root = buildTree(rawPaths);
-        TreeView<VideoNode> tree = new TreeView<>(root);
-        tree.setShowRoot(false);
-
-        // Cell factory: text + thumbnail khi load xong + padding + delete menu
-        tree.setCellFactory(tv -> new TreeCell<>() {
-            private final ImageView thumb = new ImageView();
-
-            @Override
-            protected void updateItem(VideoNode node, boolean empty) {
-                super.updateItem(node, empty);
-
-                if (empty || node == null) {
-                    setText(null);
-                    setGraphic(null);
-                    setContextMenu(null);
-                } else if (node.isDir) {
-                    setText(node.display);
-                    setGraphic(null);
-                    setContextMenu(null);
-                    setPadding(new Insets(2, 2, 2, 8));
-                } else {
-                    // file leaf
-                    setText(node.display);
-                    setGraphic(null);
-                    setPadding(new Insets(2, 2, 2, 20));
-
-                    // chỉ đặt graphic khi thumbnail đã load
-                    generateThumbnail(node, thumb, this);
-
-                    MenuItem del = new MenuItem("❌ Xóa file");
-                    del.setOnAction(e -> {
-                        try {
-                            // Xoá trong CSDL trước
-                            CameraService.deleteVideoFile(cameraId, node.fullPath);
-                            // Sau khi server xoá xong, remove node khỏi tree
-                            TreeItem<VideoNode> parent = getTreeItem().getParent();
-                            parent.getChildren().remove(getTreeItem());
-                            if (parent.getChildren().isEmpty()) {
-                                parent.getParent().getChildren().remove(parent);
-                            }
-                        } catch (Exception ex) {
-                            ex.printStackTrace();
-                            new Alert(Alert.AlertType.ERROR,
-                                    "Xoá video lỗi:\n" + ex.getMessage(),
-                                    ButtonType.OK).showAndWait();
-                        }
-                    });
-                    setContextMenu(new ContextMenu(del));
+        Button openBtn = new Button("Mở video");
+        openBtn.setOnAction(e -> {
+            String selectedPath = videoListView.getSelectionModel().getSelectedItem();
+            if (selectedPath != null && !selectedPath.contains("Lỗi") && !selectedPath.contains("Không có")) {
+                try {
+                    // Đường dẫn tương đối từ thư mục gốc của dự án
+                    File videoFile = new File(selectedPath);
+                    if (!videoFile.exists()) {
+                         showAlert("Lỗi", "Không tìm thấy file: " + videoFile.getCanonicalPath());
+                         return;
+                    }
+                    if (Desktop.isDesktopSupported()) {
+                        Desktop.getDesktop().open(videoFile.getCanonicalFile());
+                    }
+                } catch (IOException ex) {
+                    ex.printStackTrace();
+                    showAlert("Lỗi", "Không thể mở file: " + ex.getMessage());
                 }
             }
         });
 
-        Button btnPlay = new Button();
-        btnPlay.setDisable(true);
+        Button editUrlBtn = new Button("Sửa URL");
+        editUrlBtn.setOnAction(e -> {
+            TextInputDialog dialog = new TextInputDialog(camera.getUrl());
+            dialog.setTitle("Sửa URL Camera");
+            dialog.setHeaderText("Nhập URL mới cho camera.");
+            dialog.setContentText("URL:");
 
-        HBox controls = new HBox(10, btnPlay);
-        controls.setPadding(new Insets(5));
+            dialog.showAndWait().ifPresent(newUrl -> {
+                if (newUrl != null && !newUrl.trim().isEmpty()) {
+                    try {
+                        ApiService apiService = new ApiService();
+                        apiService.updateCameraUrl(camera.getId(), newUrl.trim());
+                        
+                        // --- GỌI CALLBACK ĐỂ CẬP NHẬT GIAO DIỆN CHÍNH ---
+                        if (onUpdateSuccess != null) {
+                            onUpdateSuccess.run();
+                        }
+                        // --- KẾT THÚC ---
 
-        VBox leftBox = new VBox(10,
-                new Label("Videos"),
-                tree,
-                controls // controls giờ sẽ nằm ngay dưới TreeView
-        );
-        leftBox.setPadding(new Insets(10));
-        leftBox.setPrefWidth(300);
-
-        BorderPane pane = new BorderPane();
-        pane.setPadding(new Insets(10));
-        pane.setLeft(leftBox);
-
-        // onSelect → play
-        tree.getSelectionModel().selectedItemProperty()
-                .addListener((o, old, nw) -> {
-                    if (nw != null && !nw.getValue().isDir) {
-                        playVideo(nw.getValue(), btnPlay);
+                        stage.close(); // Đóng cửa sổ chi tiết sau khi cập nhật thành công
+                    } catch (IOException ex) {
+                        showAlert("Lỗi", "Không thể cập nhật URL.\n" + ex.getMessage());
                     }
-                });
-
-        btnPlay.setText("Mở hệ thống");
-        btnPlay.setDisable(false);
-
-        btnPlay.setOnAction(e -> {
-            TreeItem<VideoNode> sel = tree.getSelectionModel().getSelectedItem();
-            if (sel != null && !sel.getValue().isDir) {
-                File file = PROJECT_BE.resolve(sel.getValue().fullPath).toFile();
-                openInSystemPlayer(file);
-            }
+                }
+            });
         });
 
-        Stage stage = new Stage();
-        stage.setTitle("Chi tiết camera: " + cameraId);
-        stage.setScene(new Scene(pane, 500, 500));
+        HBox buttonBox = new HBox(10, openBtn, editUrlBtn);
+        buttonBox.setAlignment(Pos.CENTER);
+
+        root.getChildren().addAll(titleLabel, videoListView, buttonBox);
+
+        Scene scene = new Scene(root, 500, 400);
+        stage.setScene(scene);
         stage.show();
     }
-
-    private static TreeItem<VideoNode> buildTree(List<String> raw) {
-        Map<String, Map<String, List<VideoNode>>> m = new TreeMap<>(Comparator.reverseOrder());
-
-        for (String p : raw) {
-            String[] a = p.split("/");
-            if (a.length < 4)
-                continue;
-            String date = a[1], hour = a[2], fn = a[3];
-            m.computeIfAbsent(date, d -> new TreeMap<>(Comparator.reverseOrder()))
-                    .computeIfAbsent(hour, h -> new ArrayList<>())
-                    .add(new VideoNode(fn, p, false));
-        }
-
-        TreeItem<VideoNode> root = new TreeItem<>(new VideoNode("ROOT", null, true));
-        m.forEach((date, hm) -> {
-            TreeItem<VideoNode> dn = new TreeItem<>(new VideoNode("📅 " + date, null, true));
-            hm.forEach((hour, list) -> {
-                TreeItem<VideoNode> hn = new TreeItem<>(new VideoNode("⏰ " + hour, null, true));
-                list.sort(Comparator.comparing(n -> n.display));
-                list.forEach(vn -> hn.getChildren().add(new TreeItem<>(vn)));
-                if (!hn.getChildren().isEmpty())
-                    dn.getChildren().add(hn);
-            });
-            if (!dn.getChildren().isEmpty())
-                root.getChildren().add(dn);
-        });
-        return root;
-    }
-
-    private static void playVideo(VideoNode node,
-            Button btn) {
-        VideoNode current;
-        current = node;
-
-        // kích hoạt nút hệ thống
-        btn.setDisable(false);
-        btn.setText("Mở hệ thống");
-    }
-
-    private static void generateThumbnail(VideoNode node,
-            ImageView iv,
-            TreeCell<VideoNode> cell) {
-        File f = PROJECT_BE.resolve(node.fullPath).toFile();
-        MediaPlayer tmp = new MediaPlayer(new Media(f.toURI().toString()));
-        MediaView mv = new MediaView(tmp);
-
-        tmp.setOnReady(() -> tmp.seek(Duration.seconds(0.1)));
-        tmp.setOnPlaying(() -> {
-            Image img = mv.snapshot(null, null);
-            Platform.runLater(() -> {
-                iv.setImage(img); // fill ảnh
-                cell.setGraphic(iv); // giờ mới show graphic
-            });
-            tmp.stop();
-            tmp.dispose();
-        });
-        tmp.play();
-    }
-
-    private static void deleteVideo(VideoNode node, TreeItem<VideoNode> item) {
-        File f = PROJECT_BE.resolve(node.fullPath).toFile();
-        if (f.delete()) {
-            TreeItem<VideoNode> parent = item.getParent();
-            parent.getChildren().remove(item);
-            if (parent.getChildren().isEmpty())
-                parent.getParent().getChildren().remove(parent);
-        } else {
-            new Alert(Alert.AlertType.ERROR,
-                    "Không xóa được: " + node.display,
-                    ButtonType.OK).showAndWait();
-        }
-    }
-
-    private static class VideoNode {
-        final String display;
-        final String fullPath;
-        final boolean isDir;
-
-        VideoNode(String d, String p, boolean dir) {
-            this.display = d;
-            this.fullPath = p;
-            this.isDir = dir;
-        }
-
-        @Override
-        public String toString() {
-            return display;
-        }
-    }
-
-    public static void openInSystemPlayer(File file) {
-        if (!file.exists()) {
-            System.err.println("File không tồn tại: " + file);
-            return;
-        }
-        if (Desktop.isDesktopSupported()) {
-            try {
-                Desktop.getDesktop().open(file);
-            } catch (IOException e) {
-                e.printStackTrace();
-                // Show alert nếu muốn
-            }
-        } else {
-            System.err.println("Desktop API không được hỗ trợ trên nền tảng này.");
-        }
+    
+    private static void showAlert(String title, String content) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.setContentText(content);
+        alert.showAndWait();
     }
 }

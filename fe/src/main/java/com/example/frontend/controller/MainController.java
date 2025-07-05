@@ -1,215 +1,241 @@
 package com.example.frontend.controller;
 
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.util.List;
-import java.util.Map;
-
-import javax.imageio.ImageIO;
-
-import org.bytedeco.javacv.Frame;
-import org.bytedeco.javacv.Java2DFrameConverter;
-import org.bytedeco.javacv.OpenCVFrameGrabber;
-
-import com.example.frontend.service.CameraService;
-import com.example.frontend.service.VideoWebSocketClient;
-
-import javafx.application.Platform;
-import javafx.embed.swing.SwingFXUtils;
+import com.example.frontend.model.Camera;
+import com.example.frontend.model.Room;
+import com.example.frontend.service.ApiService;
 import javafx.fxml.FXML;
-import javafx.scene.Scene;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.TextField;
-import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
-import javafx.scene.layout.ColumnConstraints;
-import javafx.scene.layout.GridPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.VBox;
+import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.control.*;
+import javafx.scene.layout.*;
 import javafx.stage.FileChooser;
-import javafx.stage.Stage;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
 
 public class MainController {
 
     @FXML
-    private TextField cameraUrlInput;
-
+    private TextField roomNameInput;
     @FXML
-    private VBox cameraListContainer;
-    private VideoWebSocketClient wsClient;
+    private VBox roomListContainer;
 
+    private final ApiService apiService = new ApiService();
 
     @FXML
     private void initialize() {
+        loadRooms();
+    }
+
+    private void loadRooms() {
+        roomListContainer.getChildren().clear();
         try {
-            List<Map<String, String>> cameras = CameraService.fetchCameraList();
-
-            // Thêm tất cả camera vào giao diện
-            for (Map<String, String> cam : cameras) {
-                String url = cam.get("url");
-                String id = cam.get("id");
-                if (url != null && !url.isEmpty()) {
-                    addCameraToUI(url, id);
-                }
+            List<Room> rooms = apiService.getRooms();
+            for (Room room : rooms) {
+                addRoomToUI(room);
             }
-
-        } catch (Exception e) {
+        } catch (IOException e) { // <-- Đã xóa InterruptedException
             e.printStackTrace();
+            showAlert(Alert.AlertType.ERROR, "Lỗi", "Không thể tải danh sách phòng từ server.");
         }
     }
 
     @FXML
-    private void handleAddCamera() {
-        String url = cameraUrlInput.getText();
+    private void handleAddRoom() {
+        String name = roomNameInput.getText().trim();
+        if (name.isEmpty()) {
+            showAlert(Alert.AlertType.WARNING, "Cảnh báo", "Tên phòng không được để trống.");
+            return;
+        }
         try {
-            CameraService.addCamera(url);
-            // Gọi lại fetch để lấy đúng id vừa thêm
-            List<Map<String, String>> cameras = CameraService.fetchCameraList();
-            for (Map<String, String> cam : cameras) {
-                if (cam.get("url").equals(url)) {
-                    addCameraToUI(url, cam.get("id"));
-                    break;
-                }
-            }
-        } catch (Exception e) {
+            Room newRoom = apiService.addRoom(name);
+            addRoomToUI(newRoom);
+            roomNameInput.clear();
+        } catch (IOException e) { // <-- Đã xóa InterruptedException
             e.printStackTrace();
+            // Cải thiện thông báo lỗi để hiển thị chi tiết từ server
+            showAlert(Alert.AlertType.ERROR, "Lỗi", "Không thể thêm phòng mới.\nChi tiết: " + e.getMessage());
         }
     }
-    @FXML private void handleAddTestVideo() {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle("Chọn video MP4");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("MP4", "*.mp4"));
-        File file = chooser.showOpenDialog(new Stage());
-        if (file != null) playTestVideo(file);
+
+    // Trong file MainController.java
+
+    private void addRoomToUI(Room room) {
+        TitledPane roomPane = new TitledPane();
+        roomPane.setAnimated(true);
+        roomPane.setExpanded(false);
+
+        Label roomNameLabel = new Label(room.getName());
+        roomNameLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Button renameBtn = new Button("Đổi tên"); // Sẽ làm ở Phần 2
+        Button deleteBtn = new Button("Xóa");
+        deleteBtn.setStyle("-fx-background-color: #dc3545; -fx-text-fill: white;");
+
+        // --- THÊM SỰ KIỆN CHO NÚT XÓA ---
+        deleteBtn.setOnAction(e -> {
+            // Hiển thị hộp thoại xác nhận
+            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+            confirmation.setTitle("Xác nhận xóa");
+            confirmation.setHeaderText("Bạn có chắc chắn muốn xóa phòng '" + room.getName() + "' không?");
+            confirmation.setContentText("Hành động này không thể hoàn tác.");
+
+            confirmation.showAndWait().ifPresent(response -> {
+                if (response == ButtonType.OK) {
+                    try {
+                        apiService.deleteRoom(room.getId());
+                        // Xóa TitledPane khỏi giao diện
+                        roomListContainer.getChildren().remove(roomPane);
+                    } catch (IOException ex) {
+                        ex.printStackTrace();
+                        showAlert(Alert.AlertType.ERROR, "Lỗi", "Không thể xóa phòng.\nChi tiết: " + ex.getMessage());
+                    }
+                }
+            });
+        }); 
+
+        // --- THÊM SỰ KIỆN CHO NÚT ĐỔI TÊN ---
+        renameBtn.setOnAction(e -> {
+            TextInputDialog dialog = new TextInputDialog(room.getName());
+            dialog.setTitle("Đổi tên phòng");
+            dialog.setHeaderText("Nhập tên mới cho phòng '" + room.getName() + "'.");
+            dialog.setContentText("Tên mới:");
+
+            dialog.showAndWait().ifPresent(newName -> {
+                if (newName != null && !newName.trim().isEmpty()) {
+                    try {
+                        Room updatedRoom = apiService.updateRoom(room.getId(), newName.trim());
+                        // Cập nhật tên trên giao diện
+                        room.setName(updatedRoom.getName());
+                        roomNameLabel.setText(updatedRoom.getName());
+                    } catch (IOException ex) {
+                        ex.printStackTrace();
+                        showAlert(Alert.AlertType.ERROR, "Lỗi", "Không thể đổi tên phòng.\nChi tiết: " + ex.getMessage());
+                    }
+                }
+            });
+        });
+
+        HBox titleBox = new HBox(10, roomNameLabel, spacer, renameBtn, deleteBtn);
+        titleBox.setAlignment(Pos.CENTER_LEFT);
+        roomPane.setGraphic(titleBox);
+
+        VBox contentBox = createRoomContent(room, roomPane);
+        roomPane.setContent(contentBox);
+
+        roomPane.expandedProperty().addListener((obs, wasExpanded, isNowExpanded) -> {
+            if (isNowExpanded) {
+                loadCamerasForRoom(room, (VBox) contentBox.lookup("#cameraContainer"));
+            }
+        });
+
+        roomListContainer.getChildren().add(roomPane);
     }
 
-    private void addCameraToUI(String url, String cameraId) {
-        Label label = new Label(url);
-        label.setStyle("-fx-font-size: 14px; -fx-text-fill: #555;");
-        label.setWrapText(true);
-        label.setMaxWidth(350);
+    private VBox createRoomContent(Room room, TitledPane parentPane) {
+        VBox cameraContainer = new VBox(10);
+        cameraContainer.setId("cameraContainer");
 
-        Button streamBtn = new Button("▶ Xem trực tiếp");
-        streamBtn.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white;");
+        TextField urlInput = new TextField();
+        urlInput.setPromptText("Nhập URL camera...");
+        HBox.setHgrow(urlInput, Priority.ALWAYS);
 
-        Button detailBtn = new Button("📂 Xem chi tiết");
-        detailBtn.setStyle("-fx-background-color: #FFC107; -fx-text-fill: black;");
-
-        Button deleteBtn = new Button("🗑 Xóa");
-        deleteBtn.setStyle("-fx-background-color: #F44336; -fx-text-fill: white;");
-
-        streamBtn.setOnAction(e -> {
+        Button addCamBtn = new Button("Thêm Camera");
+        addCamBtn.setOnAction(e -> {
+            String url = urlInput.getText().trim();
+            if (url.isEmpty()) return;
             try {
-                if (streamBtn.getText().startsWith("▶")) {
-                    CameraService.startStream(url);
-                    showAlert("Đã bắt đầu phát hiện đối tượng.");
-                    streamBtn.setText("⏹ Dừng");
-                } else {
-                    CameraService.stopStream(url);
-                    showAlert("Đã dừng stream và lưu dữ liệu.");
-                    streamBtn.setText("▶ Xem trực tiếp");
-                }
-            } catch (Exception ex) {
+                apiService.addCameraToRoom(room.getId(), url);
+                urlInput.clear();
+                loadCamerasForRoom(room, cameraContainer);
+            } catch (IOException ex) { // <-- Đã xóa InterruptedException
                 ex.printStackTrace();
+                showAlert(Alert.AlertType.ERROR, "Lỗi", "Không thể thêm camera.");
             }
         });
 
-        detailBtn.setOnAction(e -> {
-            try {
-                DetailView.open(cameraId);
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-        });
+        HBox addCameraBox = new HBox(10, urlInput, addCamBtn);
+        VBox content = new VBox(15, addCameraBox, new Separator(), cameraContainer);
+        content.setPadding(new javafx.geometry.Insets(15));
+        return content;
+    }
 
+    private void loadCamerasForRoom(Room room, VBox container) {
+        container.getChildren().clear();
+        try {
+            List<Camera> cameras = apiService.getCamerasInRoom(room.getId());
+            for (Camera camera : cameras) {
+                container.getChildren().add(createCameraRow(camera, room, container));
+            }
+        } catch (IOException e) { // <-- Đã xóa InterruptedException
+            e.printStackTrace();
+            container.getChildren().add(new Label("Lỗi tải danh sách camera."));
+        }
+    }
+
+    private Node createCameraRow(Camera camera, Room room, VBox parentContainer) {
+        Label nameLabel = new Label(room.getName());
+        nameLabel.setStyle("-fx-font-weight: bold;");
+        Label urlLabel = new Label(camera.getUrl());
+        urlLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        VBox infoBox = new VBox(2, nameLabel, urlLabel);
+
+        Button yoloBtn = new Button("Xem YOLO");
+        yoloBtn.setOnAction(e -> YoloView.open(camera.getUrl(), room.getId(), camera.getId()));
+
+        Button detailBtn = new Button("Chi tiết");
+        detailBtn.setOnAction(e -> {DetailView.open(camera, () -> loadCamerasForRoom(room, parentContainer)); });
+        Button deleteBtn = new Button("Xóa");
+        GridPane gridPane = new GridPane();
         deleteBtn.setOnAction(e -> {
-            try {
-                CameraService.deleteCamera(url);
-                cameraListContainer.getChildren().remove(((Button) e.getSource()).getParent().getParent());
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
+            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+            confirmation.setTitle("Xác nhận xóa");
+            confirmation.setHeaderText("Xóa camera có URL: " + camera.getUrl() + "?");
+            confirmation.showAndWait().ifPresent(response -> {
+                if (response == ButtonType.OK) {
+                    try {
+                        // SỬA LẠI Ở ĐÂY: Truyền vào camera.getUrl() thay vì camera.getId()
+                        apiService.deleteCamera(camera.getUrl());
+                        
+                        parentContainer.getChildren().remove(gridPane);
+                    } catch (IOException ex) {
+                        showAlert(Alert.AlertType.ERROR, "Lỗi", "Không thể xóa camera.\n" + ex.getMessage());
+                    }
+                }
+            });
         });
-
-        HBox buttonBox = new HBox(10, streamBtn, detailBtn, deleteBtn);
-        buttonBox.setStyle("-fx-alignment: CENTER_RIGHT;");
-
-        GridPane row = new GridPane();
-        row.setHgap(10);
-        row.setVgap(5);
-        row.setStyle("-fx-background-color: #fff; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;");
-        row.add(label, 0, 0);
-        row.add(buttonBox, 1, 0);
-
+        HBox buttonBox = new HBox(10, yoloBtn, detailBtn, deleteBtn);
+        buttonBox.setAlignment(Pos.CENTER_RIGHT);
+        gridPane.add(infoBox, 0, 0);
+        gridPane.add(buttonBox, 1, 0);
         ColumnConstraints col1 = new ColumnConstraints();
         col1.setPercentWidth(60);
         ColumnConstraints col2 = new ColumnConstraints();
         col2.setPercentWidth(40);
-        row.getColumnConstraints().addAll(col1, col2);
-
-        cameraListContainer.getChildren().add(row);
-    }
-    private void showAlert(String message) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Thông báo");
-        alert.setHeaderText(null);
-        alert.setContentText(message);
-        alert.showAndWait();
+        gridPane.getColumnConstraints().addAll(col1, col2);
+        gridPane.setStyle("-fx-padding: 8; -fx-background-color: #fff; -fx-border-color: #e0e0e0; -fx-border-radius: 4;");
+        return gridPane;
     }
 
-    private void playTestVideo(File videoFile) {
-        try {
-            // Mở video để đọc từng frame
-            OpenCVFrameGrabber grabber = new OpenCVFrameGrabber(videoFile);
-            grabber.start();
-
-            ImageView imageView = new ImageView();
-            imageView.setPreserveRatio(true);
-            VBox vbox = new VBox(imageView);
-            Scene scene = new Scene(vbox);
-            Stage stage = new Stage();
-            stage.setTitle("Phát lại video");
-            stage.setScene(scene);
-            stage.show();
-
-            wsClient = new VideoWebSocketClient(frame -> {
-                Platform.runLater(() -> {
-                    Image fxImage = SwingFXUtils.toFXImage(frame, null);
-                    imageView.setImage(fxImage);
-                    stage.setWidth(fxImage.getWidth());
-                    stage.setHeight(fxImage.getHeight() + 40);
-                });
-            });
-
-            wsClient.connect("ws://localhost:8000/ws/video");
-
-            Thread sender = new Thread(() -> {
-                try {
-                    Frame frame;
-                    Java2DFrameConverter converter = new Java2DFrameConverter();
-                    while ((frame = grabber.grab()) != null) {
-                        BufferedImage img = converter.convert(frame);
-                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                        ImageIO.write(img, "jpg", baos);
-                        wsClient.sendFrame(baos.toByteArray());
-                        Thread.sleep(33); // tùy theo tốc độ mong muốn
-                    }
-                    grabber.stop();
-                    wsClient.close();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-            });
-            sender.setDaemon(true);
-            sender.start();
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            showAlert("Không thể mở video: " + e.getMessage());
+    @FXML
+    private void handleTestWithVideo() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Chọn một file video để kiểm tra");
+        File file = fileChooser.showOpenDialog(roomListContainer.getScene().getWindow());
+        if (file != null) {
+            YoloView.open(file.getAbsolutePath(), "test-room", "test-camera");
         }
+    }
+
+    private void showAlert(Alert.AlertType type, String title, String content) {
+        Alert alert = new Alert(type);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.setContentText(content);
+        alert.showAndWait();
     }
 }
