@@ -13,7 +13,7 @@ import org.bytedeco.javacv.Frame;
 import org.bytedeco.javacv.OpenCVFrameConverter;
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.bytedeco.javacpp.BytePointer;
-import static org.bytedeco.opencv.global.opencv_imgcodecs.imencode; 
+import static org.bytedeco.opencv.global.opencv_imgcodecs.imencode; // <-- Import hàm nén ảnh nhanh hơn
 
 import java.awt.image.BufferedImage;
 import java.util.concurrent.ExecutorService;
@@ -75,7 +75,7 @@ public class YoloView {
                     Mat mat = toMatConverter.convert(frame);
                     if (mat != null) {
                         BytePointer buf = new BytePointer();
-                        // --- SỬ DỤNG imencode  ---
+                        // --- SỬ DỤNG imencode NHANH HƠN RẤT NHIỀU ---
                         imencode(".jpg", mat, buf);
                         
                         byte[] jpegBytes = new byte[(int) buf.limit()];

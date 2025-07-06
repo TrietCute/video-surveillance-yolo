@@ -6,7 +6,7 @@ import com.example.frontend.model.Room;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import okhttp3.*; // <-- Import OkHttp
+import okhttp3.*;
 
 import java.io.IOException;
 import java.util.ArrayList;
