@@ -76,7 +76,36 @@ def add_room(room: RoomIn):
     logger.info(f"🚪 Đã thêm phòng: {room.name}")
     return {"id": str(result.inserted_id), "name": room.name}
 
+@app.put("/rooms/{room_id}")
+def update_room(room_id: str, room: RoomIn):
+    try:
+        # Chuyển đổi room_id từ string sang ObjectId
+        object_id = ObjectId(room_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid room_id format.")
 
+    # Kiểm tra xem tên mới đã tồn tại ở phòng khác chưa
+    existing_room = room_col.find_one({"name": room.name})
+    if existing_room and existing_room["_id"] != object_id:
+        raise HTTPException(status_code=400, detail=f"Room with name '{room.name}' already exists.")
+
+    # Cập nhật tên phòng
+    result = room_col.update_one(
+        {"_id": object_id},
+        {"$set": {"name": room.name}}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Room not found.")
+
+    logger.info(f"✏️ Đã cập nhật phòng {room_id} thành '{room.name}'")
+    
+    # Trả về thông tin phòng đã được cập nhật
+    updated_room = room_col.find_one({"_id": object_id})
+    return {
+        "id": str(updated_room["_id"]),
+        "name": updated_room["name"]
+    }
 
 @app.delete("/rooms/{room_id}")
 def delete_room(room_id: str):

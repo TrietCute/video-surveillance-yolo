@@ -1,7 +1,5 @@
 package com.example.frontend.model;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 public class Room {
     private String id;
     private String name;
