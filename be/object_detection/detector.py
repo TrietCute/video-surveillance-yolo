@@ -1,144 +1,190 @@
-import cv2
-import os
 import time
-from datetime import datetime
-from threading import Lock, Thread
+import os
+import cv2
+import numpy as np
+from threading import Lock
 from ultralytics import YOLO
+from queue import Queue
 from utils.helpers import draw_boxes
 from utils.logger import log_event
-from config import VIDEO_OUTPUT_DIR, FPS, MONGO_URI, DB_NAME, COLLECTION_CAMERAS
-from .alert_logic import check_dangerous_animal, check_weapon
-from .pose_analyzer import analyze_pose
-from pymongo import MongoClient
-from bson import ObjectId
+from .allowed_classes import ALLOWED_CLASSES, DANGEROUS_ANIMALS, WEAPON_CLASSES, HUMAN_CLASSES
+from config import VIDEO_OUTPUT_DIR
 
 class Detector:
-    def __init__(self):
-        self.model = YOLO("yolov8n.pt")
-        self.ANIMAL_CLASSES = {"dog", "cat", "bear", "elephant", "tiger", "lion"}
-
-        self.abnormal_mode = False
-        self.start_abnormal_time = 0
-        self.last_detect_time = 0
-        self.DETECT_INTERVAL = 1  # seconds
-        self.ABNORMAL_DURATION = 30  # seconds
-
-        self.out_clean = None
-        self.out_annotated = None
-        self.path_clean = ""
-
+    def __init__(self, cam_id: str, event_queue: Queue = None):
+        self.model = YOLO("yolov8l-oiv7.pt")
+        self.cam_id = cam_id
+        self.event_queue = event_queue
+        self.running = True
         self.lock = Lock()
         self.latest_raw_frame = None
         self.latest_boxes = None
+        self.last_detect_time = 0
+        self.last_abnormal_time = 0
+        self.abnormal_state = False
 
-        client = MongoClient(MONGO_URI)
-        self.camera_col = client[DB_NAME][COLLECTION_CAMERAS]
+        self.should_record = False
+        self.frame_queue = Queue(maxsize=300)
 
-    def contains_person_or_animal(self, results, threshold=0.5):
-        for r in results:
-            for box in r.boxes:
-                label = self.model.names[int(box.cls)]
-                conf = float(box.conf)
-                if label == "person" and conf > threshold:
-                    return True, conf
-                if label in self.ANIMAL_CLASSES and conf > threshold:
-                    return True, conf
-        return False, 0.0
-
-    def start_video_writers(self, frame, label, room_id=None, camera_id=None):
-        h, w, _ = frame.shape
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        now = datetime.now()
-        ts = now.strftime("%M%S")
-        date_str = now.strftime("%Y-%m-%d")
-        hour_str = now.strftime("%H")
-
-        room_folder = str(room_id) if room_id else "unknown_room"
-        camera_folder = str(camera_id) if camera_id else "unknown_camera"
-
-        folder = os.path.join(VIDEO_OUTPUT_DIR, room_folder, camera_folder, date_str, hour_str)
-        os.makedirs(folder, exist_ok=True)
-
-        raw_path = os.path.join(folder, f"{label}_{ts}_clean.mp4")
-        anno_path = os.path.join(folder, f"{label}_{ts}_annotated.mp4")
-
-        return (
-            cv2.VideoWriter(raw_path, fourcc, FPS, (w, h)),
-            cv2.VideoWriter(anno_path, fourcc, FPS, (w, h))
-        ), (raw_path, anno_path)
+        self.DETECT_INTERVAL = 1
+        self.ABNORMAL_END_DELAY = 5
 
     def outside_working_hours(self):
-        now = datetime.now()
-        return now.hour < 8 or now.hour >= 18
+        now = time.localtime()
+        return now.tm_hour < 8 or now.tm_hour >= 20
 
-    def detect_on_frame(self, frame, camera_id=None):
+    def detect_on_frame(self, frame):
         now = time.time()
-
-        with self.lock:
-            self.latest_raw_frame = frame.copy()
-
         if now - self.last_detect_time < self.DETECT_INTERVAL:
             return
 
-        results = self.model(frame)
-        self.latest_boxes = results[0].boxes if len(results) > 0 else None
-        abnormal, conf = self.contains_person_or_animal(results)
+        class_ids = [i for i, name in self.model.names.items() if name.lower() in ALLOWED_CLASSES]
+        results = self.model(frame, classes=class_ids)
+        self.latest_boxes = results[0].boxes if results else None
 
-        room_id = None
-        if camera_id:
-            cam = self.camera_col.find_one({"_id": ObjectId(camera_id)})
-            if cam:
-                room_id = cam.get("room_id")
-
-        analyze_pose(results, frame, source_id=str(camera_id or "ws-stream"))
-        check_dangerous_animal(results, source_id=str(camera_id or "ws-stream"), video_path=self.path_clean if self.abnormal_mode else "")
-        check_weapon(results, source_id=str(camera_id or "ws-stream"), video_path=self.path_clean if self.abnormal_mode else "")
+        person_boxes, weapon_boxes, animal_boxes, door_boxes = [], [], [], []
 
         for r in results:
             for box in r.boxes:
-                label = self.model.names[int(box.cls)]
+                label = self.model.names[int(box.cls)].lower()
                 conf = float(box.conf)
-                if label == "person" and self.outside_working_hours():
-                    log_event("person_outside_working_hours", conf, str(camera_id or "ws-stream"), video_path="")
+                if label in HUMAN_CLASSES:
+                    person_boxes.append(box)
+                    if self.outside_working_hours():
+                        log_event("person_outside_working_hours", conf, self.cam_id, video_path="")
+                elif label in WEAPON_CLASSES:
+                    weapon_boxes.append(box)
+                elif label in DANGEROUS_ANIMALS:
+                    animal_boxes.append(box)
+                elif label == "door":
+                    door_boxes.append(box)
 
-        if abnormal and not self.abnormal_mode:
-            self.abnormal_mode = True
-            self.start_abnormal_time = now
-            writers, paths = self.start_video_writers(frame, label="abnormal", room_id=room_id, camera_id=camera_id)
-            self.out_clean, self.out_annotated = writers
-            self.path_clean, _ = paths
-            log_event("abnormal_detected", conf, str(camera_id or "ws-stream"), self.path_clean)
+        for box in animal_boxes:
+            log_event("dangerous_animal", float(box.conf), self.cam_id, video_path="")
 
-        if self.abnormal_mode:
-            annotated_frame = draw_boxes(frame.copy(), results[0].boxes)
-            if self.out_clean:
-                self.out_clean.write(frame)
-            if self.out_annotated:
-                self.out_annotated.write(annotated_frame)
+        for pbox in person_boxes:
+            px1, py1, px2, py2 = map(int, pbox.xyxy[0])
+            for wbox in weapon_boxes:
+                wx1, wy1, wx2, wy2 = map(int, wbox.xyxy[0])
+                if not (wx2 < px1 or wx1 > px2 or wy2 < py1 or wy1 > py2):
+                    log_event("person_with_weapon", float(wbox.conf), self.cam_id, video_path="")
 
-            if now - self.start_abnormal_time >= self.ABNORMAL_DURATION:
-                self.abnormal_mode = False
-                if self.out_clean:
-                    self.out_clean.release()
-                    self.out_clean = None
-                if self.out_annotated:
-                    self.out_annotated.release()
-                    self.out_annotated = None
-                self.path_clean = ""
+        # Kiểm tra người đứng gần cửa
+        STAY_THRESHOLD = 10  # giây
+        near_door = False
+        is_standing_too_long = False
+
+        for pbox in person_boxes:
+            px1, py1, px2, py2 = map(int, pbox.xyxy[0])
+            pcx, pcy = (px1 + px2) // 2, (py1 + py2) // 2
+
+            for dbox in door_boxes:
+                dx1, dy1, dx2, dy2 = map(int, dbox.xyxy[0])
+                if dx1 <= pcx <= dx2 and dy1 <= pcy <= dy2:
+                    near_door = True
+                    break
+            if near_door:
+                break
+
+        if near_door:
+            if not hasattr(self, "door_start_time"):
+                self.door_start_time = now
+            elif now - self.door_start_time > STAY_THRESHOLD:
+                is_standing_too_long = True
+                video_path = os.path.join(VIDEO_OUTPUT_DIR, f"{self.cam_id}_door_{int(now)}.mp4")
+                log_event("person_standing_too_long_near_door", 1.0, self.cam_id, video_path=video_path)
+        else:
+            if hasattr(self, "door_start_time"):
+                del self.door_start_time
+
+        # Kiểm tra trạng thái bất thường
+        abnormal = (
+            bool(animal_boxes) or
+            (person_boxes and self.outside_working_hours()) or
+            (person_boxes and weapon_boxes) or
+            is_standing_too_long
+        )
+
+        annotated = draw_boxes(frame.copy(), self.latest_boxes, self.model.names) if self.latest_boxes else frame.copy()
+
+        if abnormal:
+            self.last_abnormal_time = now
+            if not self.abnormal_state:
+                self.abnormal_state = True
+                self.should_record = True
+                video_path = os.path.join(VIDEO_OUTPUT_DIR, f"{self.cam_id}_{int(now)}.mp4")
+                if self.event_queue:
+                    self.event_queue.put({"type": "start", "frame": frame.copy(), "annotated": annotated, "timestamp": now, "video_path": video_path})
+            else:
+                if self.event_queue:
+                    self.event_queue.put({"type": "continue", "frame": frame.copy(), "annotated": annotated, "timestamp": now})
+        elif self.abnormal_state and (now - self.last_abnormal_time > self.ABNORMAL_END_DELAY):
+            self.abnormal_state = False
+            self.should_record = False
+            if self.event_queue:
+                self.event_queue.put({"type": "stop", "timestamp": now})
 
         self.last_detect_time = now
 
     def get_latest_annotated_frame(self):
         with self.lock:
-            if self.latest_raw_frame is None:
+            frame = self.latest_raw_frame.copy() if self.latest_raw_frame is not None else None
+            if frame is None:
                 return None
-            annotated = self.latest_raw_frame.copy()
-            if self.latest_boxes is not None:
-                annotated = draw_boxes(annotated, self.latest_boxes)
-            return annotated
+            if self.latest_boxes:
+                frame = draw_boxes(frame, self.latest_boxes, self.model.names)
+            return frame
 
     def cleanup(self):
-        if self.out_clean:
-            self.out_clean.release()
-        if self.out_annotated:
-            self.out_annotated.release()
+        pass
+
+    def force_stop_recording(self):
+        if self.abnormal_state and self.event_queue:
+            self.abnormal_state = False
+            self.event_queue.put({
+                "type": "stop",
+                "timestamp": time.time()
+            })
+
+     # === Hàm detect_on_frame mới: detect và vẽ box tất cả object ===
+
+    # def detect_on_frame(self, frame):
+    #     now = time.time()
+    #     if now - self.last_detect_time < self.DETECT_INTERVAL:
+    #         return
+
+    #     results = self.model(frame)
+    #     self.latest_boxes = results[0].boxes if results else None
+
+    #     if self.latest_boxes:
+    #         annotated = draw_boxes(frame.copy(), self.latest_boxes, self.model.names)
+    #     else:
+    #         annotated = frame.copy()
+
+    #     if self.event_queue:
+    #         self.event_queue.put({
+    #             "type": "frame",
+    #             "frame": frame.copy(),
+    #             "annotated": annotated,
+    #             "timestamp": now
+    #         })
+
+    #     self.last_detect_time = now
+    # def get_latest_annotated_frame(self):
+    #     with self.lock:
+    #         frame = self.latest_raw_frame.copy() if self.latest_raw_frame is not None else None
+    #         if frame is None:
+    #             return None
+    #         if self.latest_boxes:
+    #             frame = draw_boxes(frame, self.latest_boxes, self.model.names)
+    #         return frame
+
+    # def cleanup(self):
+    #     pass
+    # def force_stop_recording(self):
+    #     if self.abnormal_state and self.event_queue:
+    #         self.abnormal_state = False
+    #         self.event_queue.put({
+    #             "type": "stop",
+    #             "timestamp": time.time()
+    #         }) 

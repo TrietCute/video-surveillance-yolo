@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 import time
 import asyncio
+from utils.logger import log_event
 
 # --- Block code đảm bảo import hoạt động đáng tin cậy ---
 FILE = Path(__file__).resolve()
@@ -37,8 +38,6 @@ camera_col = db[COLLECTION_CAMERAS]
 event_col = db[COLLECTION_EVENTS]
 room_col = db[COLLECTION_ROOMS]
 
-# Khởi tạo bộ phát hiện đối tượng
-detector = Detector()
 
 # Pydantic Models cho request body
 class CameraIn(BaseModel):
@@ -174,44 +173,112 @@ def delete_camera_file(camera_id: str = Query(...), video_path: str = Query(...)
             
     return {"deletedCount": res.deleted_count}
 
-# --- WebSocket cho Video Stream và Phát hiện ---
+# Global maps
+DETECTOR_MAP = {}
+WRITER_MAP = {}
+VIDEO_OUTPUT_DIR = "data/output"
+FPS = 30
+
+def record_abnormal_video(cam_id: str):
+    detector = DETECTOR_MAP[cam_id]
+    out_clean = out_annotated = None
+    path_clean = path_annotated = None
+
+    while True:
+        frame_info = detector.frame_queue.get()
+        frame = frame_info["frame"]
+        annotated = frame_info["annotated"]
+        timestamp = frame_info["timestamp"]
+
+        if detector.should_record:
+            if out_clean is None or out_annotated is None:
+                # Start new recording
+                ts = time.strftime("%Y-%m-%d/%H-%M-%S", time.localtime(timestamp))
+                folder = os.path.join(VIDEO_OUTPUT_DIR, cam_id, ts)
+                os.makedirs(folder, exist_ok=True)
+
+                h, w = frame.shape[:2]
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                path_clean = os.path.join(folder, "abnormal_clean.mp4")
+                path_annotated = os.path.join(folder, "abnormal_annotated.mp4")
+
+                out_clean = cv2.VideoWriter(path_clean, fourcc, FPS, (w, h))
+                out_annotated = cv2.VideoWriter(path_annotated, fourcc, FPS, (w, h))
+                log_event("abnormal_start", 1.0, cam_id, video_path=path_clean)
+
+            out_clean.write(frame)
+            out_annotated.write(annotated)
+
+        elif out_clean is not None:
+            # Stop recording
+            out_clean.release()
+            out_annotated.release()
+            log_event("abnormal_end", 1.0, cam_id, video_path=path_clean)
+            out_clean = out_annotated = None
+            path_clean = path_annotated = None
+            
 @app.websocket("/ws/video")
-async def websocket_video(websocket: WebSocket):
+async def websocket_video(websocket: WebSocket, cam_id: str = Query(...)):
     await websocket.accept()
-    logger.info("🔌 WebSocket client connected.")
-    
-    last_detect_time = 0
-    detection_interval = 1.0
+
+    if cam_id not in DETECTOR_MAP:
+        detector = Detector(cam_id)
+        DETECTOR_MAP[cam_id] = detector
+        Thread(target=record_abnormal_video, args=(cam_id,), daemon=True).start()
+    else:
+        detector = DETECTOR_MAP[cam_id]
+
+    async def receive_loop():
+        try:
+            while detector.running:
+                data = await websocket.receive_bytes()
+                frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                if frame is not None:
+                    with detector.lock:
+                        detector.latest_raw_frame = frame.copy()
+        except Exception as e:
+            print(f"[ERROR] receive_loop: {e}")
+        finally:
+            detector.running = False  # <== Cờ dừng
+
+    async def detect_loop():
+        try:
+            while detector.running:
+                with detector.lock:
+                    frame = detector.latest_raw_frame.copy() if detector.latest_raw_frame is not None else None
+                if frame is not None:
+                    Thread(target=detector.detect_on_frame, args=(frame,), daemon=True).start()
+                await asyncio.sleep(detector.DETECT_INTERVAL)
+        except Exception as e:
+            print(f"[ERROR] detect_loop: {e}")
+        finally:
+            detector.running = False  # <== Cờ dừng
+
+    async def stream_loop():
+        try:
+            while detector.running:
+                with detector.lock:
+                    frame = detector.latest_raw_frame.copy() if detector.latest_raw_frame is not None else None
+                if frame is not None:
+                    annotated = detector.get_latest_annotated_frame()
+                    if annotated is None:
+                        annotated = frame
+                    _, jpeg = cv2.imencode(".jpg", annotated)
+                    await websocket.send_bytes(jpeg.tobytes())
+                await asyncio.sleep(1 / 30)
+        except Exception as e:
+            print(f"[ERROR] stream_loop: {e}")
+        finally:
+            detector.running = False  # <== Cờ dừng
 
     try:
-        while True:
-            data = await websocket.receive_bytes()
-            frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-
-            if frame is None:
-                continue
-
-            with detector.lock:
-                detector.latest_raw_frame = frame.copy()
-
-            now = time.time()
-            if now - last_detect_time >= detection_interval:
-                Thread(target=detector.detect_on_frame, args=(frame.copy(),)).start()
-                last_detect_time = now
-
-            annotated_frame = detector.get_latest_annotated_frame()
-            if annotated_frame is None:
-                annotated_frame = frame
-
-            _, jpeg = cv2.imencode(".jpg", annotated_frame)
-            await websocket.send_bytes(jpeg.tobytes())
-
-            await asyncio.sleep(1 / 30)
-
-    except WebSocketDisconnect:
-        logger.info("🔌 WebSocket client disconnected.")
-    except Exception as e:
-        logger.error(f"Lỗi WebSocket: {e}")
+        await asyncio.gather(
+            receive_loop(),
+            detect_loop(),
+            stream_loop()
+        )
     finally:
+        print(f"[INFO] Cleaning up WebSocket: {cam_id}")
+        detector.force_stop_recording()
         detector.cleanup()
         detector.running = False  # đảm bảo đã dừng
