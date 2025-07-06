@@ -5,18 +5,22 @@ from datetime import datetime
 from config import VIDEO_CLIP_DURATION, VIDEO_OUTPUT_DIR, FPS
 
 
-# Vẽ khung phát hiện
-def draw_boxes(frame, boxes):
+def draw_boxes(frame, boxes, names=None):
     if boxes is None:
         return frame
     for i in range(len(boxes.xyxy)):
         x1, y1, x2, y2 = map(int, boxes.xyxy[i])
         conf = float(boxes.conf[i])
         cls_id = int(boxes.cls[i])
-        label = str(cls_id)
+        label = names[cls_id] if names else str(cls_id)
+        label_text = f"{label} {conf:.2f}"
+
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        cv2.putText(frame, label_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6, (0, 255, 0), 2)
     return frame
+
+
 
 # Ghi lại video clip khi phát hiện
 def record_clip(source, label, room_id=None):
