@@ -222,3 +222,16 @@ async def websocket_video(websocket: WebSocket, cam_id: str = Query(...)):
         detector.force_stop_recording()
         detector.cleanup()
         detector.running = False  # đảm bảo đã dừng
+
+
+#Room management
+@app.get("/rooms")
+def list_rooms():
+    rooms = list(room_col.find())
+    return [{"id": str(r["_id"]), "name": r["name"]} for r in rooms]
+
+@app.post("/rooms")
+def add_room(name: str = Body(..., embed=True)):
+    room = {"name": name}
+    result = room_col.insert_one(room)
+    return {"id": str(result.inserted_id), "name": name}

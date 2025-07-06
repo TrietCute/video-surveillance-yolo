@@ -59,7 +59,7 @@ public class YoloView {
                         });
                     });
             // wsClient.connect("ws://localhost:8000/ws/video");
-            wsClient.connect("ws://localhost:8000/ws/video?cam_id=testcam000");
+            wsClient.connect("ws://localhost:8000/ws/video?cam_id="+cameraId);
 
             executor = Executors.newSingleThreadScheduledExecutor();
             Runnable frameSender = () -> {
