@@ -33,7 +33,7 @@ public class VideoWebSocketClient extends WebSocketListener {
             webSocket.send(ByteString.of(jpegBytes));
         }
     }
-
+    
     @Override
     public void onMessage(WebSocket webSocket, ByteString bytes) {
         try {

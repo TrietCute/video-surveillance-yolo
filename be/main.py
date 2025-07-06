@@ -252,6 +252,7 @@ async def websocket_video(websocket: WebSocket, cam_id: str = Query(...)):
 
     if cam_id not in DETECTOR_MAP:
         detector = Detector(cam_id)
+        detector.running = True  # Cờ để bắt đầu vòng lặp
         DETECTOR_MAP[cam_id] = detector
         Thread(target=record_abnormal_video, args=(cam_id,), daemon=True).start()
     else:
@@ -269,6 +270,7 @@ async def websocket_video(websocket: WebSocket, cam_id: str = Query(...)):
             print(f"[ERROR] receive_loop: {e}")
         finally:
             detector.running = False  # <== Cờ dừng
+            DETECTOR_MAP.pop(cam_id, None)
 
     async def detect_loop():
         try:
@@ -282,6 +284,7 @@ async def websocket_video(websocket: WebSocket, cam_id: str = Query(...)):
             print(f"[ERROR] detect_loop: {e}")
         finally:
             detector.running = False  # <== Cờ dừng
+            DETECTOR_MAP.pop(cam_id, None)
 
     async def stream_loop():
         try:

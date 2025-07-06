@@ -1,121 +1,262 @@
 package com.example.frontend.controller;
 
-import java.awt.image.BufferedImage;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-import org.bytedeco.javacpp.BytePointer;
-import org.bytedeco.javacv.FFmpegFrameGrabber;
-import org.bytedeco.javacv.Frame;
-import org.bytedeco.javacv.OpenCVFrameConverter;
-import static org.bytedeco.opencv.global.opencv_imgcodecs.imencode;
-import org.bytedeco.opencv.opencv_core.Mat;
-
 import com.example.frontend.service.VideoWebSocketClient;
-
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
+import javafx.geometry.Pos;
 import javafx.scene.Scene;
-import javafx.scene.image.Image; // <-- Import hàm nén ảnh nhanh hơn
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 import javafx.stage.Stage;
+import org.bytedeco.javacv.FFmpegFrameGrabber;
+import org.bytedeco.javacv.Frame;
+import org.bytedeco.javacv.Java2DFrameConverter;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class YoloView {
 
-    private static VideoWebSocketClient wsClient;
-    // Sử dụng ExecutorService thay vì ScheduledExecutorService
-    private static ExecutorService executor;
-    private static FFmpegFrameGrabber grabber;
-    // Biến cờ để điều khiển vòng lặp
-    private static volatile boolean isRunning = true;
+    public static void open(String url, String roomId, String camId) {
+        Platform.runLater(() -> new YoloView(url, roomId, camId).stage.show());
+    }
 
-    public static void open(String streamUrl, String roomId, String cameraId) {
-        Stage stage = new Stage();
-        stage.setTitle("Màn hình Giám sát YOLO - Phòng: " + roomId);
+    private final Stage stage;
+    private final VideoProcessor processor;
+
+    private YoloView(String url, String roomId, String camId) {
+        stage = new Stage();
+        stage.setTitle("YOLO Monitoring - " + roomId);
 
         ImageView imageView = new ImageView();
-        StackPane root = new StackPane(imageView);
+        Label statusLabel = statusLabel();
+
+        // --- Control Buttons ---
+        Button btnPlayPause = new Button("▶️");
+        Button btnStop = new Button("⏹");
+        Button btnForward = new Button("⏩");
+        Button btnRewind = new Button("⏪");
+
+        HBox controls = new HBox(10, btnRewind, btnPlayPause, btnStop, btnForward);
+        controls.setAlignment(Pos.BOTTOM_CENTER);
+        controls.setStyle("-fx-background-color: transparent; -fx-padding: 10;");
+
+        StackPane root = new StackPane(imageView, statusLabel, controls);
         Scene scene = new Scene(root, 1280, 720);
 
         imageView.fitWidthProperty().bind(scene.widthProperty());
         imageView.fitHeightProperty().bind(scene.heightProperty());
         imageView.setPreserveRatio(true);
-
         stage.setScene(scene);
 
-        // Tạo một luồng duy nhất để xử lý tất cả
-        executor = Executors.newSingleThreadExecutor();
-        executor.submit(() -> {
-            try {
-                // --- Toàn bộ logic nặng được đưa vào luồng này ---
-                grabber = new FFmpegFrameGrabber(streamUrl);
-                grabber.start();
+        processor = new VideoProcessor(url, camId, imageView, statusLabel);
+        processor.start();
 
-                wsClient = new VideoWebSocketClient(
-                    (BufferedImage bufferedImage) -> {
-                        if (bufferedImage != null) {
-                            Platform.runLater(() -> {
-                                Image fxImage = SwingFXUtils.toFXImage(bufferedImage, null);
-                                imageView.setImage(fxImage);
-                            });
-                        }
-                    }
-                );
-                 wsClient.connect("ws://localhost:8000/ws/video?cam_id="+cameraId);
+        stage.setOnCloseRequest(event -> {
+            processor.stop();
+            stage.close();
+        });
 
-                // Sử dụng converter của OpenCV
-                OpenCVFrameConverter.ToMat toMatConverter = new OpenCVFrameConverter.ToMat();
-
-                // Vòng lặp xử lý video, đảm bảo xử lý xong frame này mới lấy frame tiếp theo
-                while (isRunning && !Thread.currentThread().isInterrupted()) {
-                    Frame frame = grabber.grab();
-                    if (frame == null) {
-                        break; // Kết thúc nếu hết video
-                    }
-
-                    Mat mat = toMatConverter.convert(frame);
-                    if (mat != null) {
-                        BytePointer buf = new BytePointer();
-                        // --- SỬ DỤNG imencode NHANH HƠN RẤT NHIỀU ---
-                        imencode(".jpg", mat, buf);
-                        
-                        byte[] jpegBytes = new byte[(int) buf.limit()];
-                        buf.get(jpegBytes);
-                        
-                        if (wsClient != null) {
-                            wsClient.sendFrame(jpegBytes);
-                        }
-                        buf.close();
-                    }
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                // Dọn dẹp khi luồng kết thúc
-                stopEverything();
+        // --- Button Events ---
+        btnPlayPause.setOnAction(e -> {
+            if (processor.isPaused()) {
+                processor.resume();
+                btnPlayPause.setText("⏸");
+            } else {
+                processor.pause();
+                btnPlayPause.setText("▶️");
             }
         });
 
-        stage.setOnCloseRequest(event -> stopEverything());
-        stage.show();
+        btnStop.setOnAction(e -> {
+            processor.stopCompletely();
+            stage.close(); // Close the stage when stopped
+            btnPlayPause.setText("▶️");
+        });
+
+        btnForward.setOnAction(e -> {
+            processor.seekForward(10);
+        });
+
+        btnRewind.setOnAction(e -> {
+            processor.seekBackward(10);
+        });
     }
 
-    private static void stopEverything() {
-        isRunning = false; // Đặt cờ để dừng vòng lặp
-        if (executor != null && !executor.isShutdown()) {
-            executor.shutdownNow(); // Ngắt luồng ngay lập tức
+    private Label statusLabel() {
+        Label l = new Label("Initializing...");
+        l.setFont(new Font(20));
+        l.setTextFill(Color.WHITE);
+        l.setStyle("-fx-background-color: transparent; -fx-padding:8;");
+        StackPane.setAlignment(l, Pos.TOP_CENTER);
+        return l;
+    }
+
+    static class VideoProcessor {
+        private final String url, camId;
+        private final ImageView imageView;
+        private final Label statusLabel;
+        private ExecutorService executor;
+        private volatile boolean isRunning = false;
+        private volatile boolean isPaused = false;
+        private FFmpegFrameGrabber grabber;
+        private VideoWebSocketClient wsClient;
+
+        VideoProcessor(String url, String camId, ImageView iv, Label lb) {
+            this.url = url;
+            this.camId = camId;
+            this.imageView = iv;
+            this.statusLabel = lb;
         }
-        try {
-            if (wsClient != null) {
-                wsClient.close();
+
+        void start() {
+            isRunning = true;
+            executor = Executors.newSingleThreadExecutor();
+            executor.submit(this::loop);
+        }
+
+        void stop() {
+            isRunning = false;
+            if (executor != null) {
+                executor.shutdownNow();
+                try {
+                    executor.awaitTermination(2, TimeUnit.SECONDS);
+                } catch (InterruptedException ignored) {
+                }
             }
-            if (grabber != null) {
-                grabber.stop();
-                grabber.release();
+        }
+
+        void stopCompletely() {
+            stop();
+            updateStatus("Stopped");
+        }
+
+        void pause() {
+            isPaused = true;
+            updateStatus("Paused");
+        }
+
+        void resume() {
+            isPaused = false;
+            updateStatus("Streaming...");
+        }
+
+        boolean isPaused() {
+            return isPaused;
+        }
+
+        void seekForward(int seconds) {
+            try {
+                long targetTimestamp = grabber.getTimestamp() + seconds * 1_000_000L;
+                grabber.setTimestamp(targetTimestamp);
+                updateStatus("⏩ " + seconds + "s");
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        }
+
+        void seekBackward(int seconds) {
+            try {
+                long targetTimestamp = Math.max(grabber.getTimestamp() - seconds * 1_000_000L, 0);
+                grabber.setTimestamp(targetTimestamp);
+                updateStatus("⏪ " + seconds + "s");
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        private void loop() {
+            Java2DFrameConverter converter = new Java2DFrameConverter();
+            try {
+                updateStatus("Connecting...");
+                grabber = new FFmpegFrameGrabber(url);
+                grabber.setOption("rtsp_transport", "tcp");
+                grabber.setAudioChannels(0);
+                grabber.start();
+
+                double fps = grabber.getVideoFrameRate();
+                if (fps <= 1) fps = 25;
+                long frameDurationMillis = Math.round(1000.0 / fps);
+
+                wsClient = new VideoWebSocketClient(img -> {
+                    Platform.runLater(() -> imageView.setImage(SwingFXUtils.toFXImage(img, null)));
+                });
+                wsClient.connect("ws://localhost:8000/ws/video?cam_id=" + camId);
+
+                updateStatus("Streaming...");
+
+                long lastFrameTime = System.currentTimeMillis();
+
+                while (isRunning) {
+                    if (isPaused) {
+                        Thread.sleep(100);
+                        continue;
+                    }
+
+                    Frame frame = grabber.grabImage();
+                    if (frame == null) break;
+
+                    BufferedImage image = converter.convert(frame);
+                    if (image != null && wsClient != null && isRunning) {
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        ImageIO.write(image, "jpg", baos);
+                        wsClient.sendFrame(baos.toByteArray());
+
+                        Platform.runLater(() -> imageView.setImage(SwingFXUtils.toFXImage(image, null)));
+                    }
+
+                    long now = System.currentTimeMillis();
+                    long elapsed = now - lastFrameTime;
+                    long delay = frameDurationMillis - elapsed;
+                    if (delay > 0) Thread.sleep(delay);
+                    lastFrameTime = System.currentTimeMillis();
+                }
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                System.out.println("Video thread interrupted.");
+            } catch (Exception e) {
+                e.printStackTrace();
+                updateStatus("Error: " + e.getMessage());
+            } finally {
+                cleanup();
+            }
+        }
+
+        private void updateStatus(String message) {
+            Platform.runLater(() -> statusLabel.setText(message));
+        }
+
+        private void cleanup() {
+            try {
+                if (wsClient != null) {
+                    wsClient.close();
+                    wsClient = null;
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+            try {
+                if (grabber != null) {
+                    grabber.stop();
+                    grabber.release();
+                    grabber = null;
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+            updateStatus("Stopped");
         }
     }
 }
