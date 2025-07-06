@@ -1,6 +1,20 @@
 package com.example.frontend.controller;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import javax.imageio.ImageIO;
+
+import org.bytedeco.javacv.FFmpegFrameGrabber;
+import org.bytedeco.javacv.Frame;
+import org.bytedeco.javacv.Java2DFrameConverter;
+
 import com.example.frontend.service.VideoWebSocketClient;
+
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Scene;
@@ -8,16 +22,6 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
-import org.bytedeco.javacv.FFmpegFrameGrabber;
-import org.bytedeco.javacv.Frame;
-import org.bytedeco.javacv.Java2DFrameConverter;
-
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 public class YoloView {
 
@@ -40,18 +44,22 @@ public class YoloView {
         stage.setScene(scene);
 
         try {
+            if (streamUrl == null || streamUrl.isEmpty() || streamUrl.length() < 6
+                    || !(streamUrl.startsWith("http") || new File(streamUrl).exists())) {
+                throw new IllegalArgumentException("URL không hợp lệ: " + streamUrl);
+            }
             grabber = new FFmpegFrameGrabber(streamUrl);
             grabber.start();
 
             wsClient = new VideoWebSocketClient(
-                (BufferedImage bufferedImage) -> {
-                    Platform.runLater(() -> {
-                        Image fxImage = SwingFXUtils.toFXImage(bufferedImage, null);
-                        imageView.setImage(fxImage);
+                    (BufferedImage bufferedImage) -> {
+                        Platform.runLater(() -> {
+                            Image fxImage = SwingFXUtils.toFXImage(bufferedImage, null);
+                            imageView.setImage(fxImage);
+                        });
                     });
-                }
-            );
-            wsClient.connect("ws://localhost:8000/ws/video");
+            // wsClient.connect("ws://localhost:8000/ws/video");
+            wsClient.connect("ws://localhost:8000/ws/video?cam_id=testcam000");
 
             executor = Executors.newSingleThreadScheduledExecutor();
             Runnable frameSender = () -> {

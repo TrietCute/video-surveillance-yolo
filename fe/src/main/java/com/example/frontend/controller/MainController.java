@@ -96,7 +96,7 @@ public class MainController {
                     }
                 }
             });
-        }); 
+        });
 
         // --- THÊM SỰ KIỆN CHO NÚT ĐỔI TÊN ---
         renameBtn.setOnAction(e -> {
@@ -114,7 +114,8 @@ public class MainController {
                         roomNameLabel.setText(updatedRoom.getName());
                     } catch (IOException ex) {
                         ex.printStackTrace();
-                        showAlert(Alert.AlertType.ERROR, "Lỗi", "Không thể đổi tên phòng.\nChi tiết: " + ex.getMessage());
+                        showAlert(Alert.AlertType.ERROR, "Lỗi",
+                                "Không thể đổi tên phòng.\nChi tiết: " + ex.getMessage());
                     }
                 }
             });
@@ -147,7 +148,8 @@ public class MainController {
         Button addCamBtn = new Button("Thêm Camera");
         addCamBtn.setOnAction(e -> {
             String url = urlInput.getText().trim();
-            if (url.isEmpty()) return;
+            if (url.isEmpty())
+                return;
             try {
                 apiService.addCameraToRoom(room.getId(), url);
                 urlInput.clear();
@@ -185,7 +187,11 @@ public class MainController {
         VBox infoBox = new VBox(2, nameLabel, urlLabel);
 
         Button yoloBtn = new Button("Xem YOLO");
-        yoloBtn.setOnAction(e -> YoloView.open(camera.getUrl(), room.getId(), camera.getId()));
+        yoloBtn.setOnAction(e -> {
+            System.out.println("URL camera: " + camera.getUrl());
+            YoloView.open(camera.getUrl(), room.getId(), camera.getId());
+        });
+        
 
         Button detailBtn = new Button("Chi tiết");
         detailBtn.setOnAction(e -> {DetailView.open(camera, () -> loadCamerasForRoom(room, parentContainer)); });

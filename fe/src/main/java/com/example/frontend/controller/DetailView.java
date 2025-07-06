@@ -20,6 +20,9 @@ import java.io.IOException;
 import java.util.List;
 
 public class DetailView {
+    public DetailView() {
+        // Contrustor rỗng
+    }
 
     // THÊM THAM SỐ Runnable onUpdateSuccess
     public static void open(Camera camera, Runnable onUpdateSuccess) {
@@ -34,7 +37,7 @@ public class DetailView {
         titleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
 
         ListView<String> videoListView = new ListView<>();
-        
+
         try {
             ApiService apiService = new ApiService();
             List<String> videoPaths = apiService.getEventVideos(camera.getId());
@@ -56,8 +59,8 @@ public class DetailView {
                     // Đường dẫn tương đối từ thư mục gốc của dự án
                     File videoFile = new File(selectedPath);
                     if (!videoFile.exists()) {
-                         showAlert("Lỗi", "Không tìm thấy file: " + videoFile.getCanonicalPath());
-                         return;
+                        showAlert("Lỗi", "Không tìm thấy file: " + videoFile.getCanonicalPath());
+                        return;
                     }
                     if (Desktop.isDesktopSupported()) {
                         Desktop.getDesktop().open(videoFile.getCanonicalFile());
@@ -81,7 +84,7 @@ public class DetailView {
                     try {
                         ApiService apiService = new ApiService();
                         apiService.updateCameraUrl(camera.getId(), newUrl.trim());
-                        
+
                         // --- GỌI CALLBACK ĐỂ CẬP NHẬT GIAO DIỆN CHÍNH ---
                         if (onUpdateSuccess != null) {
                             onUpdateSuccess.run();
@@ -105,7 +108,7 @@ public class DetailView {
         stage.setScene(scene);
         stage.show();
     }
-    
+
     private static void showAlert(String title, String content) {
         Alert alert = new Alert(Alert.AlertType.ERROR);
         alert.setTitle(title);
