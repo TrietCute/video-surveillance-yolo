@@ -20,9 +20,7 @@ import java.io.IOException;
 import java.util.List;
 
 public class DetailView {
-    public DetailView() {
-        // Contrustor rỗng
-    }
+    public DetailView() { }
 
     // THÊM THAM SỐ Runnable onUpdateSuccess
     public static void open(Camera camera, Runnable onUpdateSuccess) {
@@ -57,7 +55,9 @@ public class DetailView {
             if (selectedPath != null && !selectedPath.contains("Lỗi") && !selectedPath.contains("Không có")) {
                 try {
                     // Đường dẫn tương đối từ thư mục gốc của dự án
-                    File videoFile = new File(selectedPath);
+                    File projectRoot = new File(System.getProperty("user.dir")).getParentFile();
+                    // Tạo đường dẫn tuyệt đối chính xác đến file video trong thư mục backend ('be')
+                    File videoFile = new File(projectRoot, "be/" + selectedPath);
                     if (!videoFile.exists()) {
                         showAlert("Lỗi", "Không tìm thấy file: " + videoFile.getCanonicalPath());
                         return;
@@ -84,14 +84,11 @@ public class DetailView {
                     try {
                         ApiService apiService = new ApiService();
                         apiService.updateCameraUrl(camera.getId(), newUrl.trim());
-
-                        // --- GỌI CALLBACK ĐỂ CẬP NHẬT GIAO DIỆN CHÍNH ---
                         if (onUpdateSuccess != null) {
                             onUpdateSuccess.run();
                         }
-                        // --- KẾT THÚC ---
-
-                        stage.close(); // Đóng cửa sổ chi tiết sau khi cập nhật thành công
+ 
+                        stage.close(); 
                     } catch (IOException ex) {
                         showAlert("Lỗi", "Không thể cập nhật URL.\n" + ex.getMessage());
                     }

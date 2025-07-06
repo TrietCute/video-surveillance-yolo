@@ -74,7 +74,7 @@ def log_event(object_name, confidence, camera_id, video_path):
         "timestamp": datetime.now().isoformat(),
         "object": object_name,
         "confidence": round(confidence, 2),
-        "camera_id": str(camera_id),
+        "camera_id": ObjectId(camera_id),
         "video_path": video_path,
         "room_id": str(room_id) if room_id else None,
     }

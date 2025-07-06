@@ -1,8 +1,7 @@
 ALLOWED_CLASSES = [
-    "person","human head","man","girl","woman","boy","child",
-    "bear", "elephant", "tiger", "lion","snake","leopard",  
-    "knife", "gun", "pistol"                        
+    'Person', 'Axe', 'Chainsaw', 'Dagger', 'Hammer', 'Knife', 'Scissors', 'Screwdriver', 'Sword', 'Rifle', 'Shotgun', 'Handgun', 'Missile', 'Bomb', 'Weapon', 'Bear', 'Bull', 'Crocodile', 'Leopard', 'Lion', 'Tiger', 'Scorpion', 'Snake', 'Door'                      
 ]
-HUMAN_CLASSES = {"person","human head","man","girl","woman","boy","child",}
-DANGEROUS_ANIMALS = {"bear", "elephant", "tiger", "lion","snake","leopard"}
-WEAPON_CLASSES = {"knife", "gun", "pistol"}
+HUMAN_CLASSES = {"Person"}
+DANGEROUS_ANIMALS = {"Bear", "Bull", "Crocodile", "Jaguar", "Leopard", "Lion", "Tiger", "Scorpion", "Snake"}
+WEAPON_CLASSES = {"Axe", "Chainsaw", "Dagger", "Drill", "Hammer", "Knife", "Scissors", "Screwdriver", "Sword", "Rifle", "Shotgun", "Handgun", "Missile", "Bomb", "Weapon"}
+

@@ -145,6 +145,7 @@ public class ApiService {
         // Xây dựng URL với query parameter
         HttpUrl url = Objects.requireNonNull(HttpUrl.parse(BASE_URL + "/camera-files")).newBuilder()
             .addQueryParameter("camera_id", cameraId)
+            .addQueryParameter("limit", "50")
             .build();
             
         Request request = new Request.Builder().url(url).build();

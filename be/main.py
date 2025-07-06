@@ -1,6 +1,7 @@
 # main.py
 import sys
 from pathlib import Path
+import queue
 from fastapi import FastAPI, Query, HTTPException, WebSocket, WebSocketDisconnect
 from bson import ObjectId
 from pymongo import MongoClient
@@ -38,26 +39,22 @@ camera_col = db[COLLECTION_CAMERAS]
 event_col = db[COLLECTION_EVENTS]
 room_col = db[COLLECTION_ROOMS]
 
-
-# Pydantic Models cho request body
+# Pydantic Models
 class CameraIn(BaseModel):
     url: str
     room_id: str
-
 class CameraUpdateIn(BaseModel):
     url: str
-
 class CameraDeleteIn(BaseModel):
     url: str
-
 class RoomIn(BaseModel):
     name: str
 
+# API Endpoints
 @app.get("/")
-def root():
-    return {"status": "API is running"}
+def root(): return {"status": "API is running"}
 
-# --- Quản lý Phòng ---
+# --- Quản lý Phòng (ĐÃ KHÔI PHỤC ĐẦY ĐỦ) ---
 @app.get("/rooms")
 def list_rooms():
     rooms = list(room_col.find())
@@ -65,70 +62,42 @@ def list_rooms():
 
 @app.post("/rooms")
 def add_room(room: RoomIn):
-    # Kiểm tra phòng đã tồn tại chưa
-    existing_room = room_col.find_one({"name": room.name})
-    if existing_room:
+    if room_col.find_one({"name": room.name}):
         raise HTTPException(status_code=400, detail=f"Room with name '{room.name}' already exists.")
-    
-    new_room_data = {"name": room.name}
-    result = room_col.insert_one(new_room_data)
+    result = room_col.insert_one({"name": room.name})
     logger.info(f"🚪 Đã thêm phòng: {room.name}")
     return {"id": str(result.inserted_id), "name": room.name}
 
 @app.put("/rooms/{room_id}")
 def update_room(room_id: str, room: RoomIn):
     try:
-        # Chuyển đổi room_id từ string sang ObjectId
         object_id = ObjectId(room_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid room_id format.")
-
-    # Kiểm tra xem tên mới đã tồn tại ở phòng khác chưa
     existing_room = room_col.find_one({"name": room.name})
     if existing_room and existing_room["_id"] != object_id:
         raise HTTPException(status_code=400, detail=f"Room with name '{room.name}' already exists.")
-
-    # Cập nhật tên phòng
-    result = room_col.update_one(
-        {"_id": object_id},
-        {"$set": {"name": room.name}}
-    )
-
+    result = room_col.update_one({"_id": object_id}, {"$set": {"name": room.name}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Room not found.")
-
     logger.info(f"✏️ Đã cập nhật phòng {room_id} thành '{room.name}'")
-    
-    # Trả về thông tin phòng đã được cập nhật
     updated_room = room_col.find_one({"_id": object_id})
-    return {
-        "id": str(updated_room["_id"]),
-        "name": updated_room["name"]
-    }
+    return {"id": str(updated_room["_id"]), "name": updated_room["name"]}
 
 @app.delete("/rooms/{room_id}")
 def delete_room(room_id: str):
     try:
-        # Chuyển đổi room_id từ string sang ObjectId
         object_id = ObjectId(room_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid room_id format.")
-
-    # Xóa phòng trong collection rooms
     result = room_col.delete_one({"_id": object_id})
-
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Room not found.")
-
-    # (Nâng cao): Bạn cũng nên xóa các camera thuộc về phòng này
-    # camera_col.delete_many({"room_id": object_id})
-    # logger.info(f"Đã xóa các camera thuộc phòng {room_id}")
-
     logger.info(f"🚪 Đã xóa phòng: {room_id}")
     return {"status": "deleted", "id": room_id}
 
 
-# --- Quản lý Camera ---
+# --- Quản lý Camera (ĐÃ KHÔI PHỤC ĐẦY ĐỦ) ---
 @app.post("/add-camera")
 def add_camera(camera: CameraIn):
     if camera.url == "local":
@@ -149,40 +118,36 @@ def delete_camera(camera: CameraDeleteIn):
         raise HTTPException(status_code=404, detail="Camera not found")
     logger.info(f"🗑️ Đã xóa camera: {camera.url}")
     return {"status": "deleted", "url": camera.url}
+
 @app.put("/cameras/{camera_id}")
 def update_camera(camera_id: str, camera_data: CameraUpdateIn):
     try:
         object_id = ObjectId(camera_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid camera_id format.")
-
-    result = camera_col.update_one(
-        {"_id": object_id},
-        {"$set": {"url": camera_data.url}}
-    )
-
+    result = camera_col.update_one({"_id": object_id}, {"$set": {"url": camera_data.url}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Camera not found.")
-
     logger.info(f"✏️ Đã cập nhật URL camera {camera_id}")
-    # Trả về camera đã được cập nhật
     updated_camera = camera_col.find_one({"_id": object_id})
-    return {
-        "id": str(updated_camera["_id"]),
-        "url": updated_camera["url"],
-        "room_id": str(updated_camera.get("room_id", ""))
-    }
+    return {"id": str(updated_camera["_id"]), "url": updated_camera["url"], "room_id": str(updated_camera.get("room_id", ""))}
 
-# --- Quản lý File Sự kiện ---
+
+# --- QUẢN LÝ FILE SỰ KIỆN ---
 @app.get("/camera-files")
-def camera_files(camera_id: str = Query(...)):
+def camera_files(camera_id: str = Query(...), limit: int = Query(50)):
     try:
         query = {"camera_id": ObjectId(camera_id)}
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid camera_id format.")
-        
     events = event_col.find(query)
-    return {"videos": [event.get("video_path", "").replace("\\", "/") for event in events]}
+    video_paths = []
+    for event in events:
+        path = event.get("video_path")
+        if path and isinstance(path, str) and path.strip():
+            if path not in video_paths:
+                video_paths.append(path.replace("\\", "/"))
+    return {"videos": video_paths}
 
 @app.delete("/camera-files")
 def delete_camera_file(camera_id: str = Query(...), video_path: str = Query(...)):
@@ -190,119 +155,135 @@ def delete_camera_file(camera_id: str = Query(...), video_path: str = Query(...)
         res = event_col.delete_many({"camera_id": ObjectId(camera_id), "video_path": video_path})
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid camera_id format.")
-
     fs_path = Path(video_path)
     if fs_path.exists():
         try:
+            annotated_path = fs_path.parent / "abnormal_annotated.mp4"
             fs_path.unlink()
-            logger.info(f"📹 Đã xóa file video: {video_path}")
+            if annotated_path.exists():
+                annotated_path.unlink()
+            logger.info(f"📹 Đã xóa file video: {video_path} và file chú thích.")
         except OSError as e:
             logger.error(f"Lỗi khi xóa file {video_path}: {e}")
             raise HTTPException(status_code=500, detail=f"Error deleting file: {e}")
-            
     return {"deletedCount": res.deleted_count}
 
-# Global maps
+
+# --- HỆ THỐNG XỬ LÝ VIDEO MỚI ---
 DETECTOR_MAP = {}
-WRITER_MAP = {}
-VIDEO_OUTPUT_DIR = "data/output"
-FPS = 30
+RECORDER_THREADS = {}
+FRAME_QUEUES = {}
 
-def record_abnormal_video(cam_id: str):
-    detector = DETECTOR_MAP[cam_id]
+def video_recorder(cam_id: str, frame_queue: queue.Queue, detector: Detector):
     out_clean = out_annotated = None
-    path_clean = path_annotated = None
+    is_recording = False
+    video_path = ""
+    FPS = 25
+    while detector.running:
+        try:
+            frame_info = frame_queue.get(timeout=1)
+            raw_frame = frame_info["frame"]
+            timestamp = frame_info["timestamp"]
+            if detector.is_abnormal:
+                if not is_recording:
+                    is_recording = True
+                    ts = time.strftime("%Y-%m-%d/%H-%M-%S", time.localtime(timestamp))
+                    folder = os.path.join(VIDEO_OUTPUT_DIR, cam_id, ts)
+                    os.makedirs(folder, exist_ok=True)
+                    h, w = raw_frame.shape[:2]
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                    path_clean = os.path.join(folder, "abnormal_clean.mp4").replace("\\", "/")
+                    path_annotated = os.path.join(folder, "abnormal_annotated.mp4").replace("\\", "/")
+                    video_path = path_clean
+                    print(f"[DEBUG] 🎥 Bắt đầu ghi: {path_clean}")
+                    out_clean = cv2.VideoWriter(path_clean, fourcc, FPS, (w, h))
+                    out_annotated = cv2.VideoWriter(path_annotated, fourcc, FPS, (w, h))
+                    log_event("abnormal_start", 1.0, cam_id, video_path=video_path)
+                if out_clean and out_annotated:
+                    annotated_frame = detector.get_latest_annotated_frame()
+                    if annotated_frame is None:
+                        annotated_frame = raw_frame
+                    out_clean.write(raw_frame)
+                    out_annotated.write(annotated_frame)
+            elif is_recording:
+                is_recording = False
+                print(f"[DEBUG] 🛑 Dừng ghi video: {video_path}")
+                if out_clean: out_clean.release()
+                if out_annotated: out_annotated.release()
+                out_clean = out_annotated = None
+                video_path = ""
+        except queue.Empty:
+            if is_recording and not detector.is_abnormal:
+                is_recording = False
+                print(f"[DEBUG] 🛑 Dừng ghi video (do timeout): {video_path}")
+                if out_clean: out_clean.release()
+                if out_annotated: out_annotated.release()
+                out_clean = out_annotated = None
+                video_path = ""
+            continue
+    if is_recording:
+        print(f"[DEBUG] 🛑 Dừng ghi video (do cleanup): {video_path}")
+        if out_clean: out_clean.release()
+        if out_annotated: out_annotated.release()
 
-    while True:
-        frame_info = detector.frame_queue.get()
-        frame = frame_info["frame"]
-        annotated = frame_info["annotated"]
-        timestamp = frame_info["timestamp"]
-
-        if detector.should_record:
-            if out_clean is None or out_annotated is None:
-                # Start new recording
-                ts = time.strftime("%Y-%m-%d/%H-%M-%S", time.localtime(timestamp))
-                folder = os.path.join(VIDEO_OUTPUT_DIR, cam_id, ts)
-                os.makedirs(folder, exist_ok=True)
-
-                h, w = frame.shape[:2]
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                path_clean = os.path.join(folder, "abnormal_clean.mp4")
-                path_annotated = os.path.join(folder, "abnormal_annotated.mp4")
-
-                out_clean = cv2.VideoWriter(path_clean, fourcc, FPS, (w, h))
-                out_annotated = cv2.VideoWriter(path_annotated, fourcc, FPS, (w, h))
-                log_event("abnormal_start", 1.0, cam_id, video_path=path_clean)
-
-            out_clean.write(frame)
-            out_annotated.write(annotated)
-
-        elif out_clean is not None:
-            # Stop recording
-            out_clean.release()
-            out_annotated.release()
-            log_event("abnormal_end", 1.0, cam_id, video_path=path_clean)
-            out_clean = out_annotated = None
-            path_clean = path_annotated = None
-            
 @app.websocket("/ws/video")
 async def websocket_video(websocket: WebSocket, cam_id: str = Query(...)):
     await websocket.accept()
-
-    if cam_id not in DETECTOR_MAP:
-        detector = Detector(cam_id)
-        detector.running = True  # Cờ để bắt đầu vòng lặp
-        DETECTOR_MAP[cam_id] = detector
-        Thread(target=record_abnormal_video, args=(cam_id,), daemon=True).start()
-    else:
-        detector = DETECTOR_MAP[cam_id]
-
+    detector = Detector(cam_id)
+    frame_queue = queue.Queue(maxsize=300)
+    DETECTOR_MAP[cam_id] = detector
+    FRAME_QUEUES[cam_id] = frame_queue
+    recorder_thread = Thread(target=video_recorder, args=(cam_id, frame_queue, detector), daemon=True)
+    recorder_thread.start()
+    RECORDER_THREADS[cam_id] = recorder_thread
+    print(f"[INFO] ✅ WebSocket connected for cam_id: {cam_id}. Recorder thread started.")
     async def receive_loop():
-        try:
-            while detector.running:
+        while detector.running:
+            try:
                 data = await websocket.receive_bytes()
                 frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
                 if frame is not None:
                     with detector.lock:
                         detector.latest_raw_frame = frame.copy()
-        except Exception as e:
-            print(f"[ERROR] receive_loop: {e}")
-        finally:
-            detector.running = False  # <== Cờ dừng
-            DETECTOR_MAP.pop(cam_id, None)
-
+                    try:
+                        frame_queue.put_nowait({"frame": frame, "timestamp": time.time()})
+                    except queue.Full:
+                        try:
+                            frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            frame_queue.put_nowait({"frame": frame, "timestamp": time.time()})
+                        except queue.Full:
+                            pass
+            except WebSocketDisconnect:
+                print(f"[INFO] WebSocket disconnected by client: {cam_id}")
+                detector.running = False
+                break
+            except Exception as e:
+                print(f"[ERROR] receive_loop: {e}")
+                detector.running = False
+                break
     async def detect_loop():
-        try:
-            while detector.running:
-                with detector.lock:
-                    frame = detector.latest_raw_frame.copy() if detector.latest_raw_frame is not None else None
-                if frame is not None:
-                    Thread(target=detector.detect_on_frame, args=(frame,), daemon=True).start()
-                await asyncio.sleep(detector.DETECT_INTERVAL)
-        except Exception as e:
-            print(f"[ERROR] detect_loop: {e}")
-        finally:
-            detector.running = False  # <== Cờ dừng
-            DETECTOR_MAP.pop(cam_id, None)
-
+        while detector.running:
+            with detector.lock:
+                frame = detector.latest_raw_frame.copy() if detector.latest_raw_frame is not None else None
+            if frame is not None:
+                detector.detect_on_frame(frame)
+            await asyncio.sleep(0.5)
     async def stream_loop():
-        try:
-            while detector.running:
-                with detector.lock:
-                    frame = detector.latest_raw_frame.copy() if detector.latest_raw_frame is not None else None
-                if frame is not None:
-                    annotated = detector.get_latest_annotated_frame()
-                    if annotated is None:
-                        annotated = frame
-                    _, jpeg = cv2.imencode(".jpg", annotated)
+        while detector.running:
+            try:
+                annotated_frame = detector.get_latest_annotated_frame()
+                if annotated_frame is not None:
+                    _, jpeg = cv2.imencode(".jpg", annotated_frame)
                     await websocket.send_bytes(jpeg.tobytes())
                 await asyncio.sleep(1 / 30)
-        except Exception as e:
-            print(f"[ERROR] stream_loop: {e}")
-        finally:
-            detector.running = False  # <== Cờ dừng
-
+            except WebSocketDisconnect:
+                break 
+            except Exception as e:
+                print(f"[ERROR] stream_loop: {e}")
+                break
     try:
         await asyncio.gather(
             receive_loop(),
@@ -310,7 +291,11 @@ async def websocket_video(websocket: WebSocket, cam_id: str = Query(...)):
             stream_loop()
         )
     finally:
-        print(f"[INFO] Cleaning up WebSocket: {cam_id}")
-        detector.force_stop_recording()
-        detector.cleanup()
-        detector.running = False  # đảm bảo đã dừng
+        print(f"[INFO] Cleaning up resources for cam_id: {cam_id}")
+        detector.running = False
+        if recorder_thread.is_alive():
+            recorder_thread.join(timeout=2)
+        DETECTOR_MAP.pop(cam_id, None)
+        FRAME_QUEUES.pop(cam_id, None)
+        RECORDER_THREADS.pop(cam_id, None)
+        print(f"[INFO] Resources for {cam_id} cleaned up.")

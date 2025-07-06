@@ -11,23 +11,25 @@ from .allowed_classes import ALLOWED_CLASSES, DANGEROUS_ANIMALS, WEAPON_CLASSES,
 from config import VIDEO_OUTPUT_DIR
 
 class Detector:
-    def __init__(self, cam_id: str, event_queue: Queue = None):
-        self.model = YOLO("yolov8l-oiv7.pt")
+    def __init__(self, cam_id: str):
+        self.model = YOLO("best.pt")
         self.cam_id = cam_id
-        self.event_queue = event_queue
         self.running = True
         self.lock = Lock()
+
+        # Trạng thái phát hiện
         self.latest_raw_frame = None
         self.latest_boxes = None
         self.last_detect_time = 0
         self.last_abnormal_time = 0
-        self.abnormal_state = False
+        
+        # Cờ hiệu cho biết có sự kiện bất thường đang diễn ra hay không
+        self.is_abnormal = False
 
-        self.should_record = False
-        self.frame_queue = Queue(maxsize=300)
-
-        self.DETECT_INTERVAL = 1
-        self.ABNORMAL_END_DELAY = 5
+        # Các hằng số
+        self.DETECT_INTERVAL = 1  # Chỉ chạy phát hiện mỗi giây một lần
+        self.ABNORMAL_END_DELAY = 5  # Tăng thời gian chờ để tránh dừng ghi hình quá sớm
+        self.STAY_THRESHOLD = 10  # Thời gian một người được phép đứng gần cửa
 
     def outside_working_hours(self):
         now = time.localtime()
@@ -35,23 +37,39 @@ class Detector:
 
     def detect_on_frame(self, frame):
         now = time.time()
+
+        # Giới hạn tần suất phát hiện để tiết kiệm tài nguyên
         if now - self.last_detect_time < self.DETECT_INTERVAL:
             return
 
-        class_ids = [i for i, name in self.model.names.items() if name.lower() in ALLOWED_CLASSES]
-        results = self.model(frame, classes=class_ids)
-        self.latest_boxes = results[0].boxes if results else None
+        # Chỉ phát hiện các class cho phép
+        class_ids = [
+            i for i, name in self.model.names.items()
+            if name.lower() in ALLOWED_CLASSES
+        ]
+        results = self.model(frame, classes=class_ids, verbose=True) # Thêm verbose=False để log gọn hơn
+        
+        with self.lock:
+            self.latest_boxes = results[0].boxes if results else None
 
+        # Tách các loại object ra từng nhóm
         person_boxes, weapon_boxes, animal_boxes, door_boxes = [], [], [], []
+
+        if not self.latest_boxes:
+            # Nếu không phát hiện đối tượng nào, kiểm tra xem có nên kết thúc trạng thái bất thường không
+            if self.is_abnormal and (now - self.last_abnormal_time > self.ABNORMAL_END_DELAY):
+                print(f"[INFO] 🛑 Kết thúc trạng thái bất thường cho cam {self.cam_id} do không có phát hiện.")
+                self.is_abnormal = False
+                log_event("abnormal_end", 1.0, self.cam_id, video_path="")
+            self.last_detect_time = now
+            return
 
         for r in results:
             for box in r.boxes:
                 label = self.model.names[int(box.cls)].lower()
-                conf = float(box.conf)
+                
                 if label in HUMAN_CLASSES:
                     person_boxes.append(box)
-                    if self.outside_working_hours():
-                        log_event("person_outside_working_hours", conf, self.cam_id, video_path="")
                 elif label in WEAPON_CLASSES:
                     weapon_boxes.append(box)
                 elif label in DANGEROUS_ANIMALS:
@@ -59,70 +77,62 @@ class Detector:
                 elif label == "door":
                     door_boxes.append(box)
 
-        for box in animal_boxes:
-            log_event("dangerous_animal", float(box.conf), self.cam_id, video_path="")
+        # === LOGIC KIỂM TRA SỰ KIỆN BẤT THƯỜNG ===
+        is_currently_abnormal = False
 
+        # 1. Động vật nguy hiểm
+        if animal_boxes:
+            is_currently_abnormal = True
+            log_event("dangerous_animal", float(animal_boxes[0].conf), self.cam_id, video_path="")
+
+        # 2. Người ngoài giờ làm việc
+        if person_boxes and self.outside_working_hours():
+            is_currently_abnormal = True
+            log_event("person_outside_working_hours", float(person_boxes[0].conf), self.cam_id, video_path="")
+
+        # 3. Người cầm vũ khí
         for pbox in person_boxes:
             px1, py1, px2, py2 = map(int, pbox.xyxy[0])
             for wbox in weapon_boxes:
                 wx1, wy1, wx2, wy2 = map(int, wbox.xyxy[0])
                 if not (wx2 < px1 or wx1 > px2 or wy2 < py1 or wy1 > py2):
+                    is_currently_abnormal = True
                     log_event("person_with_weapon", float(wbox.conf), self.cam_id, video_path="")
+                    break
+            if is_currently_abnormal: break
 
-        # Kiểm tra người đứng gần cửa
-        STAY_THRESHOLD = 10  # giây
+        # 4. Người đứng gần cửa quá lâu
         near_door = False
-        is_standing_too_long = False
-
         for pbox in person_boxes:
             px1, py1, px2, py2 = map(int, pbox.xyxy[0])
             pcx, pcy = (px1 + px2) // 2, (py1 + py2) // 2
-
             for dbox in door_boxes:
                 dx1, dy1, dx2, dy2 = map(int, dbox.xyxy[0])
                 if dx1 <= pcx <= dx2 and dy1 <= pcy <= dy2:
                     near_door = True
                     break
-            if near_door:
-                break
+            if near_door: break
 
         if near_door:
             if not hasattr(self, "door_start_time"):
                 self.door_start_time = now
-            elif now - self.door_start_time > STAY_THRESHOLD:
-                is_standing_too_long = True
-                video_path = os.path.join(VIDEO_OUTPUT_DIR, f"{self.cam_id}_door_{int(now)}.mp4")
-                log_event("person_standing_too_long_near_door", 1.0, self.cam_id, video_path=video_path)
+            elif now - self.door_start_time > self.STAY_THRESHOLD:
+                is_currently_abnormal = True
+                log_event("person_standing_too_long_near_door", 1.0, self.cam_id, video_path="")
         else:
             if hasattr(self, "door_start_time"):
                 del self.door_start_time
-
-        # Kiểm tra trạng thái bất thường
-        abnormal = (
-            bool(animal_boxes) or
-            (person_boxes and self.outside_working_hours()) or
-            (person_boxes and weapon_boxes) or
-            is_standing_too_long
-        )
-
-        annotated = draw_boxes(frame.copy(), self.latest_boxes, self.model.names) if self.latest_boxes else frame.copy()
-
-        if abnormal:
+        
+        # === CẬP NHẬT TRẠNG THÁI BẤT THƯỜNG CHUNG ===
+        if is_currently_abnormal:
             self.last_abnormal_time = now
-            if not self.abnormal_state:
-                self.abnormal_state = True
-                self.should_record = True
-                video_path = os.path.join(VIDEO_OUTPUT_DIR, f"{self.cam_id}_{int(now)}.mp4")
-                if self.event_queue:
-                    self.event_queue.put({"type": "start", "frame": frame.copy(), "annotated": annotated, "timestamp": now, "video_path": video_path})
-            else:
-                if self.event_queue:
-                    self.event_queue.put({"type": "continue", "frame": frame.copy(), "annotated": annotated, "timestamp": now})
-        elif self.abnormal_state and (now - self.last_abnormal_time > self.ABNORMAL_END_DELAY):
-            self.abnormal_state = False
-            self.should_record = False
-            if self.event_queue:
-                self.event_queue.put({"type": "stop", "timestamp": now})
+            if not self.is_abnormal:
+                print(f"[INFO] 🔥 Bắt đầu trạng thái bất thường cho cam {self.cam_id}")
+                self.is_abnormal = True
+        elif self.is_abnormal and (now - self.last_abnormal_time > self.ABNORMAL_END_DELAY):
+            print(f"[INFO] 🛑 Kết thúc trạng thái bất thường cho cam {self.cam_id}")
+            self.is_abnormal = False
+            log_event("abnormal_end", 1.0, self.cam_id, video_path="")
 
         self.last_detect_time = now
 
@@ -131,60 +141,12 @@ class Detector:
             frame = self.latest_raw_frame.copy() if self.latest_raw_frame is not None else None
             if frame is None:
                 return None
+            
+            # Vẽ các box phát hiện mới nhất lên frame
             if self.latest_boxes:
-                frame = draw_boxes(frame, self.latest_boxes, self.model.names)
+                frame = draw_boxes(frame, self.latest_boxes, self.model.names)     
             return frame
 
     def cleanup(self):
+        print(f"Cleanup detector for cam {self.cam_id}")
         pass
-
-    def force_stop_recording(self):
-        if self.abnormal_state and self.event_queue:
-            self.abnormal_state = False
-            self.event_queue.put({
-                "type": "stop",
-                "timestamp": time.time()
-            })
-
-     # === Hàm detect_on_frame mới: detect và vẽ box tất cả object ===
-
-    # def detect_on_frame(self, frame):
-    #     now = time.time()
-    #     if now - self.last_detect_time < self.DETECT_INTERVAL:
-    #         return
-
-    #     results = self.model(frame)
-    #     self.latest_boxes = results[0].boxes if results else None
-
-    #     if self.latest_boxes:
-    #         annotated = draw_boxes(frame.copy(), self.latest_boxes, self.model.names)
-    #     else:
-    #         annotated = frame.copy()
-
-    #     if self.event_queue:
-    #         self.event_queue.put({
-    #             "type": "frame",
-    #             "frame": frame.copy(),
-    #             "annotated": annotated,
-    #             "timestamp": now
-    #         })
-
-    #     self.last_detect_time = now
-    # def get_latest_annotated_frame(self):
-    #     with self.lock:
-    #         frame = self.latest_raw_frame.copy() if self.latest_raw_frame is not None else None
-    #         if frame is None:
-    #             return None
-    #         if self.latest_boxes:
-    #             frame = draw_boxes(frame, self.latest_boxes, self.model.names)
-    #         return frame
-
-    # def cleanup(self):
-    #     pass
-    # def force_stop_recording(self):
-    #     if self.abnormal_state and self.event_queue:
-    #         self.abnormal_state = False
-    #         self.event_queue.put({
-    #             "type": "stop",
-    #             "timestamp": time.time()
-    #         }) 
