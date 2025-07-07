@@ -179,32 +179,74 @@ def video_recorder(cam_id: str, frame_queue: queue.Queue, detector: Detector):
     is_recording = False
     video_path = ""
     FPS = 25
+
+    # Truy xuất metadata từ camera_id
+    try:
+        camera_obj_id = ObjectId(cam_id)
+        camera_doc = camera_col.find_one({"_id": camera_obj_id})
+        if not camera_doc:
+            raise ValueError(f"Không tìm thấy camera với ID: {cam_id}")
+
+        # → Xử lý url thành camera_name
+        url = camera_doc.get("url", "")
+        parsed_url = urlparse(url)
+        hostname = parsed_url.hostname or "unknown_host"
+        port = parsed_url.port or ""
+        camera_name = f"camera_{hostname.replace('.', '_')}_{port}".strip("_")
+
+        # → Truy xuất room name
+        room_name = "unknown_room"
+        room_id = camera_doc.get("room_id")
+        if room_id:
+            room_doc = room_col.find_one({"_id": room_id})
+            if room_doc:
+                room_name = room_doc.get("name", "unknown_room").replace(" ", "_")
+
+    except Exception as e:
+        print(f"[ERROR] Lỗi lấy metadata camera: {e}")
+        camera_name = f"camera_{cam_id[:6]}"
+        room_name = "unknown_room"
+
     while detector.running:
         try:
             frame_info = frame_queue.get(timeout=1)
             raw_frame = frame_info["frame"]
             timestamp = frame_info["timestamp"]
+
             if detector.is_abnormal:
                 if not is_recording:
                     is_recording = True
-                    ts = time.strftime("%Y-%m-%d/%H-%M-%S", time.localtime(timestamp))
-                    folder = os.path.join(VIDEO_OUTPUT_DIR, cam_id, ts)
+
+                    # Phân tách ngày và giờ
+                    date_str = time.strftime("%Y-%m-%d", time.localtime(timestamp))
+                    time_str = time.strftime("%H-%M-%S", time.localtime(timestamp))
+
+                    # Tạo thư mục lưu video
+                    folder = os.path.join(VIDEO_OUTPUT_DIR, room_name, camera_name, date_str, time_str)
                     os.makedirs(folder, exist_ok=True)
+
+                    # Tạo writer
                     h, w = raw_frame.shape[:2]
                     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                     path_clean = os.path.join(folder, "abnormal_clean.mp4").replace("\\", "/")
                     path_annotated = os.path.join(folder, "abnormal_annotated.mp4").replace("\\", "/")
                     video_path = path_clean
+
                     print(f"[DEBUG] 🎥 Bắt đầu ghi: {path_clean}")
                     out_clean = cv2.VideoWriter(path_clean, fourcc, FPS, (w, h))
                     out_annotated = cv2.VideoWriter(path_annotated, fourcc, FPS, (w, h))
-                    log_event("abnormal_start", 1.0, cam_id, video_path=video_path)
+
+                    # Ghi log hoặc sự kiện
+                    log_event("abnormal_start", 1.0, cam_id, video_path=video_path, extras={
+                        "room_name": room_name,
+                        "camera_name": camera_name
+                    })
+
                 if out_clean and out_annotated:
-                    annotated_frame = detector.get_latest_annotated_frame()
-                    if annotated_frame is None:
-                        annotated_frame = raw_frame
+                    annotated_frame = detector.get_latest_annotated_frame() or raw_frame
                     out_clean.write(raw_frame)
                     out_annotated.write(annotated_frame)
+
             elif is_recording:
                 is_recording = False
                 print(f"[DEBUG] 🛑 Dừng ghi video: {video_path}")
@@ -212,6 +254,7 @@ def video_recorder(cam_id: str, frame_queue: queue.Queue, detector: Detector):
                 if out_annotated: out_annotated.release()
                 out_clean = out_annotated = None
                 video_path = ""
+
         except queue.Empty:
             if is_recording and not detector.is_abnormal:
                 is_recording = False
@@ -221,6 +264,8 @@ def video_recorder(cam_id: str, frame_queue: queue.Queue, detector: Detector):
                 out_clean = out_annotated = None
                 video_path = ""
             continue
+
+    # Cleanup nếu vẫn đang ghi
     if is_recording:
         print(f"[DEBUG] 🛑 Dừng ghi video (do cleanup): {video_path}")
         if out_clean: out_clean.release()
