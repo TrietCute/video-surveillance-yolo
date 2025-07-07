@@ -12,51 +12,65 @@ from config import VIDEO_OUTPUT_DIR
 
 class Detector:
     def __init__(self, cam_id: str):
-        self.model = YOLO("best.pt")
+        self.model = YOLO("yolov8l-oiv7.pt")
         self.cam_id = cam_id
         self.running = True
         self.lock = Lock()
 
-        # Trạng thái phát hiện
+        self.should_record = False
         self.latest_raw_frame = None
         self.latest_boxes = None
+        self.last_box_time = 0
         self.last_detect_time = 0
         self.last_abnormal_time = 0
-        
-        # Cờ hiệu cho biết có sự kiện bất thường đang diễn ra hay không
         self.is_abnormal = False
 
-        # Các hằng số
-        self.DETECT_INTERVAL = 1  # Chỉ chạy phát hiện mỗi giây một lần
-        self.ABNORMAL_END_DELAY = 5  # Tăng thời gian chờ để tránh dừng ghi hình quá sớm
-        self.STAY_THRESHOLD = 10  # Thời gian một người được phép đứng gần cửa
+        self.BOX_HOLD_DURATION = 1.0
+        self.DETECT_INTERVAL = 1
+        self.ABNORMAL_END_DELAY = 5
+        self.STAY_THRESHOLD = 10
+
+        # Thêm biến tracking
+        self.object_tracks = {}  # object_id: last_seen_time
 
     def outside_working_hours(self):
         now = time.localtime()
-        return now.tm_hour < 8 or now.tm_hour >= 20
+        return now.tm_hour < 8 or now.tm_hour >= 8
 
     def detect_on_frame(self, frame):
         now = time.time()
 
-        # Giới hạn tần suất phát hiện để tiết kiệm tài nguyên
         if now - self.last_detect_time < self.DETECT_INTERVAL:
             return
 
-        # Chỉ phát hiện các class cho phép
         class_ids = [
             i for i, name in self.model.names.items()
             if name.lower() in ALLOWED_CLASSES
         ]
-        results = self.model(frame, classes=class_ids, verbose=True) # Thêm verbose=False để log gọn hơn
-        
-        with self.lock:
-            self.latest_boxes = results[0].boxes if results else None
 
-        # Tách các loại object ra từng nhóm
+        results = self.model.track(
+            frame,
+            persist=True,
+            classes=class_ids,
+            verbose=False
+        )
+
+        with self.lock:
+            if results and results[0].boxes:
+                self.latest_boxes = results[0].boxes
+                self.previous_boxes = self.latest_boxes
+                self.last_box_time = now
+            else:
+        # Nếu không có phát hiện mới, giữ khung cũ nếu chưa quá thời gian
+                if now - self.last_box_time <= self.BOX_HOLD_DURATION:
+                    self.latest_boxes = self.previous_boxes
+                else:
+                    self.latest_boxes = None
+
+
         person_boxes, weapon_boxes, animal_boxes, door_boxes = [], [], [], []
 
         if not self.latest_boxes:
-            # Nếu không phát hiện đối tượng nào, kiểm tra xem có nên kết thúc trạng thái bất thường không
             if self.is_abnormal and (now - self.last_abnormal_time > self.ABNORMAL_END_DELAY):
                 print(f"[INFO] 🛑 Kết thúc trạng thái bất thường cho cam {self.cam_id} do không có phát hiện.")
                 self.is_abnormal = False
@@ -67,9 +81,14 @@ class Detector:
         for r in results:
             for box in r.boxes:
                 label = self.model.names[int(box.cls)].lower()
-                
+                object_id = int(box.id) if hasattr(box, "id") and box.id is not None else None
+
+                if object_id is not None:
+                    self.object_tracks[object_id] = now
+
                 if label in HUMAN_CLASSES:
                     person_boxes.append(box)
+                    print(f"[DETECT] 👤 Person detected with confidence: {float(box.conf):.2f} on cam {self.cam_id}")
                 elif label in WEAPON_CLASSES:
                     weapon_boxes.append(box)
                 elif label in DANGEROUS_ANIMALS:
@@ -77,7 +96,13 @@ class Detector:
                 elif label == "door":
                     door_boxes.append(box)
 
-        # === LOGIC KIỂM TRA SỰ KIỆN BẤT THƯỜNG ===
+        # Dọn dẹp object không còn xuất hiện
+        EXPIRE_TIME = 30
+        self.object_tracks = {
+            obj_id: last_time for obj_id, last_time in self.object_tracks.items()
+            if now - last_time <= EXPIRE_TIME
+        }
+
         is_currently_abnormal = False
 
         # 1. Động vật nguy hiểm
@@ -99,7 +124,8 @@ class Detector:
                     is_currently_abnormal = True
                     log_event("person_with_weapon", float(wbox.conf), self.cam_id, video_path="")
                     break
-            if is_currently_abnormal: break
+            if is_currently_abnormal:
+                break
 
         # 4. Người đứng gần cửa quá lâu
         near_door = False
@@ -111,7 +137,8 @@ class Detector:
                 if dx1 <= pcx <= dx2 and dy1 <= pcy <= dy2:
                     near_door = True
                     break
-            if near_door: break
+            if near_door:
+                break
 
         if near_door:
             if not hasattr(self, "door_start_time"):
@@ -122,8 +149,7 @@ class Detector:
         else:
             if hasattr(self, "door_start_time"):
                 del self.door_start_time
-        
-        # === CẬP NHẬT TRẠNG THÁI BẤT THƯỜNG CHUNG ===
+
         if is_currently_abnormal:
             self.last_abnormal_time = now
             if not self.is_abnormal:
@@ -141,10 +167,8 @@ class Detector:
             frame = self.latest_raw_frame.copy() if self.latest_raw_frame is not None else None
             if frame is None:
                 return None
-            
-            # Vẽ các box phát hiện mới nhất lên frame
             if self.latest_boxes:
-                frame = draw_boxes(frame, self.latest_boxes, self.model.names)     
+                frame = draw_boxes(frame, self.latest_boxes, self.model.names)
             return frame
 
     def cleanup(self):
