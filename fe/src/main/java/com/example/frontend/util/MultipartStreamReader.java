@@ -27,11 +27,7 @@ public class MultipartStreamReader {
             if (line.startsWith(boundary)) {
                 if (inContent) break; // kết thúc ảnh hiện tại
                 inContent = true;
-                // Bỏ qua headers (Content-Type...)
-                while ((len = readLine(lineBuffer)) != -1) {
-                    String header = new String(lineBuffer, 0, len).trim();
-                    if (header.isEmpty()) break; // kết thúc headers
-                }
+                skipHeaders(lineBuffer);
                 continue;
             }
 
@@ -41,6 +37,14 @@ public class MultipartStreamReader {
         }
 
         return buffer.toByteArray();
+    }
+
+    private void skipHeaders(byte[] lineBuffer) throws IOException {
+        int len;
+        while ((len = readLine(lineBuffer)) != -1) {
+            String header = new String(lineBuffer, 0, len).trim();
+            if (header.isEmpty()) break; // kết thúc headers
+        }
     }
 
     private int readLine(byte[] buffer) throws IOException {

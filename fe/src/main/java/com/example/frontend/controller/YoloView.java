@@ -1,6 +1,19 @@
 package com.example.frontend.controller;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import javax.imageio.ImageIO;
+
+import org.bytedeco.javacv.FFmpegFrameGrabber;
+import org.bytedeco.javacv.Frame;
+import org.bytedeco.javacv.Java2DFrameConverter;
+
 import com.example.frontend.service.VideoWebSocketClient;
+
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Pos;
@@ -13,16 +26,6 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.stage.Stage;
-import org.bytedeco.javacv.FFmpegFrameGrabber;
-import org.bytedeco.javacv.Frame;
-import org.bytedeco.javacv.Java2DFrameConverter;
-
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 public class YoloView {
 
@@ -102,7 +105,8 @@ public class YoloView {
     }
 
     static class VideoProcessor {
-        private final String url, camId;
+        private final String url;
+        private final String camId;
         private final ImageView imageView;
         private final Label statusLabel;
         private ExecutorService executor;
@@ -175,8 +179,7 @@ public class YoloView {
         }
 
         private void loop() {
-            Java2DFrameConverter converter = new Java2DFrameConverter();
-            try {
+            try (Java2DFrameConverter converter = new Java2DFrameConverter()) {
                 updateStatus("Connecting...");
                 grabber = new FFmpegFrameGrabber(url);
                 grabber.setOption("rtsp_transport", "tcp");
@@ -196,29 +199,37 @@ public class YoloView {
 
                 long lastFrameTime = System.currentTimeMillis();
 
-                while (isRunning) {
+                boolean shouldRun = true;
+                while (isRunning && shouldRun) {
                     if (isPaused) {
-                        Thread.sleep(100);
+                        try {
+                            TimeUnit.MILLISECONDS.sleep(100);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
                         continue;
                     }
 
                     Frame frame = grabber.grabImage();
-                    if (frame == null) break;
+                    if (frame == null) {
+                        shouldRun = false;
+                    } else {
+                        BufferedImage image = converter.convert(frame);
+                        if (image != null && wsClient != null && isRunning) {
+                            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                            ImageIO.write(image, "jpg", baos);
+                            wsClient.sendFrame(baos.toByteArray());
 
-                    BufferedImage image = converter.convert(frame);
-                    if (image != null && wsClient != null && isRunning) {
-                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                        ImageIO.write(image, "jpg", baos);
-                        wsClient.sendFrame(baos.toByteArray());
+                            Platform.runLater(() -> imageView.setImage(SwingFXUtils.toFXImage(image, null)));
+                        }
 
-                        Platform.runLater(() -> imageView.setImage(SwingFXUtils.toFXImage(image, null)));
+                        long now = System.currentTimeMillis();
+                        long elapsed = now - lastFrameTime;
+                        long delay = frameDurationMillis - elapsed;
+                        if (delay > 0) Thread.sleep(delay);
+                        lastFrameTime = System.currentTimeMillis();
                     }
-
-                    long now = System.currentTimeMillis();
-                    long elapsed = now - lastFrameTime;
-                    long delay = frameDurationMillis - elapsed;
-                    if (delay > 0) Thread.sleep(delay);
-                    lastFrameTime = System.currentTimeMillis();
                 }
 
             } catch (InterruptedException e) {

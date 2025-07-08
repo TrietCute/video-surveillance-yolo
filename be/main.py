@@ -13,6 +13,7 @@ import numpy as np
 import time
 import asyncio
 from utils.logger import log_event
+from urllib.parse import urlparse
 
 # --- Block code đảm bảo import hoạt động đáng tin cậy ---
 FILE = Path(__file__).resolve()

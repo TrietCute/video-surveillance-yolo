@@ -1,18 +1,23 @@
 // src/main/java/com/example/frontend/service/ApiService.java
 package com.example.frontend.service;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+
 import com.example.frontend.model.Camera;
 import com.example.frontend.model.Room;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import okhttp3.*;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.stream.Collectors;
+import okhttp3.HttpUrl;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 public class ApiService {
     private static final String BASE_URL = "http://localhost:8000";
@@ -90,7 +95,7 @@ public class ApiService {
             List<Camera> allCameras = mapper.readValue(Objects.requireNonNull(response.body()).string(), new TypeReference<>() {});
             return allCameras.stream()
                     .filter(camera -> roomId.equals(camera.getRoomId()))
-                    .collect(Collectors.toList());
+                    .toList();
         }
     }
 
