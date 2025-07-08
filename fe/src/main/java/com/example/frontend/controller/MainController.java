@@ -1,18 +1,31 @@
 package com.example.frontend.controller;
 
-import com.example.frontend.model.Camera;
-import com.example.frontend.model.Room;
-import com.example.frontend.service.ApiService;
-import javafx.fxml.FXML;
-import javafx.geometry.Pos;
-import javafx.scene.Node;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
-import javafx.stage.FileChooser;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+
+import com.example.frontend.model.Camera;
+import com.example.frontend.model.Room;
+import com.example.frontend.service.ApiService;
+
+import javafx.fxml.FXML;
+import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Label;
+import javafx.scene.control.Separator;
+import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.TitledPane;
+import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 
 public class MainController {
 
@@ -233,7 +246,7 @@ public class MainController {
         fileChooser.setTitle("Chọn một file video để kiểm tra");
         File file = fileChooser.showOpenDialog(roomListContainer.getScene().getWindow());
         if (file != null) {
-            YoloView.open(file.getAbsolutePath(), "test-room", "test-camera");
+            YoloView.open(file.getAbsolutePath(), "test-room", "686a4271215452f38958e7b8");
         }
     }
 

@@ -1,7 +1,13 @@
 ALLOWED_CLASSES = [
-    'Person', 'Axe', 'Chainsaw', 'Dagger', 'Hammer', 'Knife', 'Scissors', 'Screwdriver', 'Sword', 'Rifle', 'Shotgun', 'Handgun', 'Missile', 'Bomb', 'Weapon', 'Bear', 'Bull', 'Crocodile', 'Leopard', 'Lion', 'Tiger', 'Scorpion', 'Snake', 'Door'                      
+    'person', 'axe', 'chainsaw', 'dagger', 'hammer', 'knife', 'scissors', 'screwdriver', 'sword', 'rifle', 'shotgun', 'handgun', 'missile', 'bomb', 'weapon', 
+    'bear', 'bull', 'crocodile', 'leopard', 'lion', 'tiger', 'scorpion', 'snake', 'door'
 ]
-HUMAN_CLASSES = {"Person"}
-DANGEROUS_ANIMALS = {"Bear", "Bull", "Crocodile", "Jaguar", "Leopard", "Lion", "Tiger", "Scorpion", "Snake"}
-WEAPON_CLASSES = {"Axe", "Chainsaw", "Dagger", "Drill", "Hammer", "Knife", "Scissors", "Screwdriver", "Sword", "Rifle", "Shotgun", "Handgun", "Missile", "Bomb", "Weapon"}
 
+HUMAN_CLASSES = {"person"}
+
+DANGEROUS_ANIMALS = {"bear", "bull", "crocodile", "jaguar", "leopard", "lion", "tiger", "scorpion", "snake"}
+
+WEAPON_CLASSES = {
+    "axe", "chainsaw", "dagger", "drill", "hammer", "knife", "scissors", 
+    "screwdriver", "sword", "rifle", "shotgun", "handgun", "missile", "bomb", "weapon"
+}

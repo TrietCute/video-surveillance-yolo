@@ -12,6 +12,18 @@ import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.Frame;
 import org.bytedeco.javacv.Java2DFrameConverter;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import javax.imageio.ImageIO;
+
+import org.bytedeco.javacv.FFmpegFrameGrabber;
+import org.bytedeco.javacv.Frame;
+import org.bytedeco.javacv.Java2DFrameConverter;
+
 import com.example.frontend.service.VideoWebSocketClient;
 
 import javafx.application.Platform;
@@ -188,7 +200,8 @@ public class YoloView {
 
                 double fps = grabber.getVideoFrameRate();
                 if (fps <= 1) fps = 25;
-                long frameDurationMillis = Math.round(1000.0 / fps);
+                // Sử dụng nano giây để có độ chính xác cao hơn
+                long frameDurationNanos = (long) (1_000_000_000.0 / fps);
 
                 wsClient = new VideoWebSocketClient(img -> {
                     Platform.runLater(() -> imageView.setImage(SwingFXUtils.toFXImage(img, null)));
@@ -197,10 +210,9 @@ public class YoloView {
 
                 updateStatus("Streaming...");
 
-                long lastFrameTime = System.currentTimeMillis();
+                while (isRunning) {
+                    long loopStartTime = System.nanoTime();
 
-                boolean shouldRun = true;
-                while (isRunning && shouldRun) {
                     if (isPaused) {
                         try {
                             TimeUnit.MILLISECONDS.sleep(100);
@@ -212,29 +224,39 @@ public class YoloView {
                     }
 
                     Frame frame = grabber.grabImage();
-                    if (frame == null) {
-                        shouldRun = false;
-                    } else {
-                        BufferedImage image = converter.convert(frame);
-                        if (image != null && wsClient != null && isRunning) {
-                            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                            ImageIO.write(image, "jpg", baos);
-                            wsClient.sendFrame(baos.toByteArray());
+                    if (frame == null) break;
 
-                            Platform.runLater(() -> imageView.setImage(SwingFXUtils.toFXImage(image, null)));
+                    BufferedImage image = converter.convert(frame);
+                    if (image != null && wsClient != null && isRunning) {
+                        // Hiển thị frame lên UI ngay lập tức để giảm độ trễ cảm nhận được
+                        // Platform.runLater(() -> imageView.setImage(SwingFXUtils.toFXImage(image, null)));
+
+                        // Nén và gửi frame
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        ImageIO.write(image, "jpg", baos);
+                        wsClient.sendFrame(baos.toByteArray());
+                    }
+
+                    // Tính toán thời gian ngủ chính xác
+                    long loopEndTime = System.nanoTime();
+                    long elapsedNanos = loopEndTime - loopStartTime;
+                    long sleepNanos = frameDurationNanos - elapsedNanos;
+
+                    if (sleepNanos > 0) {
+                        try {
+                            // Chuyển nano giây sang mili giây và nano giây còn lại để sleep
+                            TimeUnit.NANOSECONDS.sleep(sleepNanos);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            System.out.println("Video thread interrupted.");
+                            break;
                         }
-
-                        long now = System.currentTimeMillis();
-                        long elapsed = now - lastFrameTime;
-                        long delay = frameDurationMillis - elapsed;
-                        if (delay > 0) Thread.sleep(delay);
-                        lastFrameTime = System.currentTimeMillis();
                     }
                 }
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                System.out.println("Video thread interrupted.");
+                System.out.println("Video thread interrupted during initial sleep.");
             } catch (Exception e) {
                 e.printStackTrace();
                 updateStatus("Error: " + e.getMessage());
